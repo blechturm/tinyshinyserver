@@ -34,6 +34,18 @@ cpuset="$SERVER_CPU0-$((SERVER_CPU0 + cpus - 1))"
 mkdir -p "$out/raw"
 rel_out=$(realpath --relative-to="$here" "$out")
 
+# One benchmark at a time: two would share the server container's name and
+# the machine's CPUs. A lock left by a killed run is taken over.
+lock="${TMPDIR:-/tmp}/tss-bench.lock"
+if ! mkdir "$lock" 2>/dev/null; then
+  other=$(cat "$lock/pid" 2>/dev/null || echo "")
+  if [ -n "$other" ] && kill -0 "$other" 2>/dev/null; then
+    echo "Another benchmark (pid $other) is running; not starting" >&2
+    exit 1
+  fi
+fi
+echo $$ > "$lock/pid"
+
 docker network inspect tssbench >/dev/null 2>&1 || docker network create tssbench >/dev/null
 if ! docker ps --format '{{.Names}}' | grep -qx tss-load; then
   docker rm -f tss-load >/dev/null 2>&1 || true
@@ -43,7 +55,7 @@ fi
 docker rm -f tss-server >/dev/null 2>&1 || true
 docker run -d --name tss-server --network tssbench --cpuset-cpus="$cpuset" \
   ${EXTRA_ENV:-} ${SCHEDULER:+-e SCHEDULER=$SCHEDULER} "$IMAGE" "$mode" "$n" >/dev/null
-trap 'docker rm -f tss-server >/dev/null 2>&1 || true' EXIT
+trap 'docker rm -f tss-server >/dev/null 2>&1 || true; rm -rf "$lock"' EXIT
 
 url="http://tss-server:3838/proxy/demo/"
 ready_paths="/proxy/demo/"
@@ -69,7 +81,7 @@ snapshot() {
   docker exec tss-server /bench/procstat.sh > "$1"
   date +%s.%N > "$1.t"
   docker exec tss-server sh -c \
-    'm=/sys/fs/cgroup/memory; echo current $(cat $m/memory.usage_in_bytes); echo peak $(cat $m/memory.max_usage_in_bytes); grep -E "^total_(rss|cache) " $m/memory.stat' \
+    'm=/sys/fs/cgroup/memory; echo current $(cat $m/memory.usage_in_bytes); echo peak $(cat $m/memory.max_usage_in_bytes); grep -E "^total_(rss|cache|shmem) " $m/memory.stat' \
     > "$1.mem" 2>/dev/null || true
 }
 
