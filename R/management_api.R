@@ -247,6 +247,11 @@ handle_management_status_api <- function(config) {
       if (length(config$last_reload) > 0) {
         status$last_reload <- config$last_reload
       }
+      # Experimental: replicas' telemetry over mizu channels
+      telemetry <- replica_telemetry_summary(config)
+      if (length(telemetry) > 0) {
+        status$replica_telemetry <- telemetry
+      }
 
       return(create_json_response(status))
     },

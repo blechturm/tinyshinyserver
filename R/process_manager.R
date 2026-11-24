@@ -638,6 +638,16 @@ ProcessManager <- setRefClass("ProcessManager",
         ""
       }
 
+      # A replica with telemetry attaches to its channel first; see
+      # replica_telemetry.R
+      telemetry <- NULL
+      if (!is.null(app_config$replica_of) && replica_telemetry_enabled()) {
+        telemetry <- tryCatch(replica_channel_create(), error = function(e) {
+          logger::log_warn("No telemetry channel for {app_name}: {error}", app_name = app_name, error = conditionMessage(e))
+          NULL
+        })
+      }
+
       # Start the app process. Its stdout and stderr go straight to the log
       # files so that output from child processes and native code is captured
       # and can never fill an unread pipe.
@@ -655,7 +665,16 @@ ProcessManager <- setRefClass("ProcessManager",
       process <- callr::r_bg(
         function(app_path, port, type, file, needs_render, render_document, log_dir, state_file,
                  quarto_bin, environ_libraries, library_file, profile_file, profile_setting,
-                 profile_chosen, environ_file, process_environ_file, drop_renv_project) {
+                 profile_chosen, environ_file, process_environ_file, drop_renv_project,
+                 telemetry_token = NULL) {
+          if (!is.null(telemetry_token)) {
+            # mizu's peer runs the expression that the server staged, which
+            # calls this function again, without the token, to run the app
+            assign(".tss_app_args", utils::modifyList(mget(names(formals(sys.function())), environment()),
+              list(telemetry_token = NULL), keep.null = TRUE), envir = globalenv())
+            assign(".tss_app_main", sys.function(), envir = globalenv())
+            return(mizu:::peer_main(telemetry_token))
+          }
           if (profile_chosen) {
             # The profile that the app's environment file chose. Processes
             # that the app starts, such as the R session that renders a Quarto
@@ -748,7 +767,8 @@ ProcessManager <- setRefClass("ProcessManager",
           profile_chosen = profile_chosen,
           environ_file = environ_file,
           process_environ_file = process_environ_file,
-          drop_renv_project = drop_renv_project
+          drop_renv_project = drop_renv_project,
+          telemetry_token = telemetry$token
         ),
         stdout = output_log,
         stderr = error_log,
@@ -763,6 +783,9 @@ ProcessManager <- setRefClass("ProcessManager",
 
       config$add_app_process(app_name, process)
       config$set_app_document(app_name, app)
+      if (!is.null(telemetry)) {
+        replica_channel_watch(config, .self, app_name, telemetry, process)
+      }
 
       # Mark app as starting (for non-blocking startup handling)
       started_at <- Sys.time()

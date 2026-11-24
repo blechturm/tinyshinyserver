@@ -12,7 +12,7 @@
 # downloads, uses relative URLs and so reaches the same replica through the
 # existing proxy. The URL itself is the session's affinity.
 
-REPLICA_SCHEDULERS <- c("least_connections", "round_robin")
+REPLICA_SCHEDULERS <- c("least_connections", "round_robin", "workload_aware")
 MAX_REPLICAS <- 64
 
 # How long a visitor who was sent to a replica counts toward its load before
@@ -146,7 +146,13 @@ choose_replica <- function(config, group, record = TRUE) {
     order[[1]]
   } else {
     loads <- vapply(order, function(name) {
-      replica_load(config, name) + if (is_process_alive(config$get_app_process(name))) 0 else 0.5
+      load <- replica_load(config, name) + if (is_process_alive(config$get_app_process(name))) 0 else 0.5
+      # Without telemetry, workload_aware is least_connections; see
+      # replica_telemetry.R
+      if (identical(group$scheduler, "workload_aware")) {
+        load <- load + TELEMETRY_BUSY_WEIGHT * (replica_busy(config, name) %||% 0)
+      }
+      load
     }, numeric(1))
     order[[which.min(loads)]]
   }

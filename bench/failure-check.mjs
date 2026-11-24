@@ -42,7 +42,8 @@ async function appStatus(name) {
   return Object.values(apps).find((a) => a.name === name);
 }
 
-const sessions = await Promise.all(Array.from({ length: SESSIONS }, () => new ShinySession({ timeoutMs: 10000 }).open(URL_)));
+const OP_TIMEOUT = Number(args["op-timeout"] ?? 10) * 1000;
+const sessions = await Promise.all(Array.from({ length: SESSIONS }, () => new ShinySession({ timeoutMs: OP_TIMEOUT }).open(URL_)));
 const outcome = sessions.map((s) => ({ replica: s.replica, ok: 0, failed: 0, first_error: null, error_at: null }));
 let stop = false;
 const loops = sessions.map(async (s, i) => {
