@@ -128,4 +128,14 @@ test_that("a replica's process reports heartbeats and its death over mizu", {
   process$kill()
   expect_true(wait(function() is.null(config$replica_state[["telemetry:demo-1"]]), 5))
   expect_true(wait(function() is.null(config$get_app_process("demo-1")), 5))
+
+  # A replica asked to stop ends its app and exits cleanly, not as a failure
+  manager$cancel_pending_restarts()
+  expect_true(manager$start_app(config$config$apps[[1]]))
+  expect_true(wait(function() (config$replica_state[["telemetry:demo-1"]]$beats %||% 0) >= 2))
+  process <- config$get_app_process("demo-1")
+  expect_true(replica_stop_command(config, "demo-1"))
+  expect_true(wait(function() !process$is_alive(), 10))
+  expect_equal(process$get_exit_status(), 0)
+  expect_false(process_failed(process))
 })
