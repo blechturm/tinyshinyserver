@@ -25,7 +25,9 @@ for part in $parts; do
         mapfile -t jobs < <(printf '%s\n' "${jobs[@]}" | shuf)
         for job in "${jobs[@]}"; do
           read -r data mode n <<< "$job"
-          EXTRA_ENV="-e BENCH_APP=/bench/app-data -e BENCH_DATA_MODE=$data" \
+          # Docker's default /dev/shm (64 MB) cannot hold the shared dataset; every
+          # arm gets the same 1 GB so that only the data mode differs
+          EXTRA_ENV="--shm-size=1g -e BENCH_APP=/bench/app-data -e BENCH_DATA_MODE=$data" \
             "$here/run-config.sh" "$cpus" "$mode" "$n" "Q" "20" 2 "$out/data-$data"
         done
       done ;;

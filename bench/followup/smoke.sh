@@ -20,6 +20,6 @@ check() {
 }
 check async B -e BENCH_APP=/bench/app-async -e BENCH_DAEMONS=1
 for data in memory mori duckdb; do
-  check "data-$data" Q -e BENCH_APP=/bench/app-data -e BENCH_DATA_MODE=$data
+  check "data-$data" Q --shm-size=1g -e BENCH_APP=/bench/app-data -e BENCH_DATA_MODE=$data
 done
 echo "smoke tests passed"

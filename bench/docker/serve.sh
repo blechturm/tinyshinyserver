@@ -13,7 +13,11 @@ app_dir="${BENCH_APP:-/bench/app}"
 if [ "${BENCH_DATA_MODE:-}" = "mori" ]; then
   rm -f /data/mori-name
   Rscript /bench/app-data/share-data.R /data /data/mori-name &
-  while [ ! -s /data/mori-name ]; do sleep 0.2; done
+  owner=$!
+  while [ ! -s /data/mori-name ]; do
+    kill -0 "$owner" 2>/dev/null || { echo "data owner failed" >&2; exit 1; }
+    sleep 0.2
+  done
 fi
 if [ "$mode" = "direct" ]; then
   exec Rscript -e "shiny::runApp('$app_dir', port = 3838, host = '0.0.0.0', launch.browser = FALSE)"
