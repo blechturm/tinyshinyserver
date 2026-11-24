@@ -1,15 +1,20 @@
 <!--
 DRAFT, NOT SUBMITTED. To be posted only after human review and approval.
 Intended as a GitHub discussion or issue on lab1702/tinyshinyserver, before
-any pull request. Replace the bracketed placeholders before posting.
+any pull request. REPORT_URL and BRANCH_URL are filled in once the branch
+is pushed.
 -->
 
 # Idea: several R processes per app ("replicas"), with each session pinned to one
 
 Hi, and thanks for tinyshinyserver. Its small, readable code made the
-following experiment possible in a few days. Before turning it into a pull
-request, I'd like to ask whether you would want this feature at all, and
-if so, in what form.
+following experiment possible. Before turning it into a pull request, I'd
+like to ask whether you would want this feature at all, and if so, in what
+form.
+
+To be upfront: I did this spike with Claude Code (Anthropic's AI coding
+assistant). It wrote the code, the benchmarks and the write-up under my
+direction; I reviewed the design and the results.
 
 ## The problem
 
@@ -70,8 +75,16 @@ Where it does **not** help, or costs:
   retries.
 - With one process, the change costs nothing measurable.
 
-Full method, raw data and plots: [link to the branch or a gist, after
-approval].
+Replicas also combine well with async code in the app. With the heavy
+computation in a `shiny::ExtendedTask` on mirai daemons, plus 4 replicas,
+only 0.3% of cheap operations took over 250 ms on 1 vCPU at 40 users,
+against 25% with replicas alone and 70% with async alone: replicas stop
+users from blocking each other without app changes, async keeps a
+session's own computation out of the process that serves everyone else.
+
+Full method, results and limitations: [REPORT_URL]. The branch also has
+the raw data, the benchmark harness to rerun everything (`bench/README.md`)
+and the code: [BRANCH_URL].
 
 ## Questions for you
 

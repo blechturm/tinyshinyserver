@@ -8,6 +8,13 @@ helps. A second part evaluates [mizu](https://github.com/shikokuchuo/mizu)
 shared-memory channels as an optional control plane between the server and
 those processes.
 
+This spike was carried out with Claude Code (Anthropic's AI coding
+assistant): it wrote the code, the benchmark harness and this report under
+the direction and review of the branch's author. Reviews of the routing,
+benchmark validity and mizu integration were done by separate AI review
+agents that were not told the expected answers; their findings and fixes
+are recorded below.
+
 ## Summary
 
 - **It fits the architecture.** A `replicas: N` setting on an app starts N
@@ -43,7 +50,8 @@ those processes.
   queries.
 - **mizu** (shared-memory channels) works as an optional per-replica
   telemetry channel for a workload-aware scheduler, but only through
-  internal functions; see the mizu evaluation.
+  internal functions, and its benefit to scheduling is unmeasured;
+  recommendation: defer (see the mizu evaluation).
 - Estimated effort to a mergeable contribution: about 3 weeks, mostly
   failover, on-demand edge cases, dashboard and tests.
 
@@ -953,4 +961,59 @@ server's own stop path, which kills the process tree as before: a graceful
 stop is only as prompt as the app's event loop, which is exactly what is
 unavailable when a replica is stuck.
 
-<!-- MIZU-RESULTS -->
+### Measurements
+
+**Transport round trips** (`bench/mizu/transport-bench.R`): one R process
+sends a payload to another and waits for it to come back. Median of 2,000
+round trips (200 for 1 MB, 30 for 10 MB), two runs, on the Windows host, not in the
+Linux container:
+
+| Payload | mizu, blocking receive | mizu, event-driven (`later`) | WebSocket | HTTP |
+|---|---|---|---|---|
+| 100 B | 3 µs | 190–200 µs | 140–150 µs | 650–780 µs |
+| 10 KB | 21–22 µs | 207–208 µs | 203–232 µs | 720–910 µs |
+| 1 MB | 47–49 µs | 276–304 µs | 8.5–8.8 ms | 5.8–6.8 ms |
+| 10 MB | 1.4–3.2 ms | 3.9–4.0 ms | 93–102 ms | 65–77 ms |
+
+mizu's raw speed is real: two orders of magnitude for small messages
+when the receiver blocks, and 20–30× for megabyte payloads. But a server
+cannot block: it must receive inside its event loop, and there the
+round trip for small messages is about the same as a WebSocket's, because
+it is dominated by waking the loop, not by the transport. Telemetry
+messages are 48 bytes, ten per second per replica; neither transport is a
+bottleneck at that rate.
+
+**Not measured.** The control-plane benchmark (`bench/mizu/run-mizu.sh`:
+session churn with `workload_aware` against `least_connections` and
+round robin, idle cost of eight channels, behaviour when replicas are
+killed) was prepared but not run, because the replica results answered
+the main questions first and the scheduler's possible gain is bounded:
+with session-level affinity, placement affects only new sessions (see
+above). How much `workload_aware` improves on `least_connections` is
+therefore open.
+
+### Recommendation: defer
+
+- **The core feature does not need mizu.** Least connections over the
+  proxy's own session counts placed sessions evenly (the busiest of eight
+  replicas held 12.5–20% of them), and process liveness is read from
+  callr's handle at each choice. Everything measured in section 5 was
+  achieved without mizu.
+- **The integration depends on mizu internals** (`:::`, five functions)
+  and on a package first announced three weeks ago (0.1.1). A
+  contribution upstream cannot rely on either.
+- **Its benefit is unmeasured**, and bounded by affinity. Its cost is
+  concrete: a second inter-process mechanism, an allocator change in every
+  app process unless suppressed, `/dev/shm` sizing in containers, and
+  about 250 lines plus 230 lines of tests.
+- **Where it would be the right tool**: moving large data between the
+  server and app processes (megabytes, where it is 20–30× faster than
+  WebSocket or HTTP), or a server that wants live load from replicas for
+  other purposes (a dashboard of event-loop lag, for example).
+
+Revisit if mizu gains a supported, non-blocking way for a process it did
+not spawn to join a channel (the two questions above), and if the
+control-plane benchmark shows that workload-aware placement improves tail
+latency under session churn. Until then, the telemetry stays on this branch
+as an experiment, off by default (`TSS_REPLICA_TELEMETRY=mizu`), and out of
+any upstream proposal.
