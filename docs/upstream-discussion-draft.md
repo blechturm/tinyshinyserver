@@ -1,8 +1,8 @@
 <!--
 DRAFT, NOT SUBMITTED. To be posted only after human review and approval.
 Intended as a GitHub discussion or issue on lab1702/tinyshinyserver, before
-any pull request. REPORT_URL and BRANCH_URL are filled in once the branch
-is pushed.
+any pull request. Links point to the branch pushed to the fork
+blechturm/tinyshinyserver.
 -->
 
 # Idea: several R processes per app ("replicas"), with each session pinned to one
@@ -82,9 +82,9 @@ against 25% with replicas alone and 70% with async alone: replicas stop
 users from blocking each other without app changes, async keeps a
 session's own computation out of the process that serves everyone else.
 
-Full method, results and limitations: [REPORT_URL]. The branch also has
+Full method, results and limitations: https://github.com/blechturm/tinyshinyserver/blob/spike/session-load-balancing/docs/load-balancing-spike.md. The branch also has
 the raw data, the benchmark harness to rerun everything (`bench/README.md`)
-and the code: [BRANCH_URL].
+and the code: https://github.com/blechturm/tinyshinyserver/tree/spike/session-load-balancing.
 
 ## Questions for you
 
