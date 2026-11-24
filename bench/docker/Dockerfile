@@ -32,7 +32,6 @@ COPY mizu /bench/mizu
 # The shared-data benchmark's dataset: about 270 MB in memory
 RUN Rscript /bench/app-data/make-data.R /data 1e7
 COPY docker/serve.sh docker/procstat.sh docker/calibrate.R docker/VERSIONS /bench/
-RUN chmod +x /bench/*.sh   && Rscript -e 'for (p in c("mizu", "mori", "mirai", "nanonext", "duckdb", "shiny")) cat(p, format(packageVersion(p)), "
-")' >> /bench/VERSIONS
+RUN chmod +x /bench/*.sh   && Rscript -e 'for (p in c("mizu", "mori", "mirai", "nanonext", "duckdb", "shiny")) cat(p, format(packageVersion(p)), "\n")' >> /bench/VERSIONS
 EXPOSE 3838 3839
 ENTRYPOINT ["/bench/serve.sh"]
