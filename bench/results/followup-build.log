@@ -1,0 +1,94 @@
+#0 building with "desktop-linux" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 2.03kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/rocker/r-ver:4.6.1
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [ 1/15] FROM docker.io/rocker/r-ver:4.6.1
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 16.41MB 5.1s
+#5 transferring context: 16.95MB 5.1s done
+#5 DONE 5.1s
+
+#6 [ 2/15] RUN install2.r --error --skipinstalled       shiny httpuv websocket logger callr ps jsonlite later curl promises glue rmarkdown quarto   && rm -rf /tmp/downloaded_packages
+#6 CACHED
+
+#7 [ 3/15] RUN Rscript -e 'install.packages("https://cloud.r-project.org/src/contrib/mizu_0.1.1.tar.gz", repos = NULL, type = "source")'   && Rscript -e 'stopifnot(packageVersion("mizu") == "0.1.1")'
+#7 CACHED
+
+#8 [ 4/15] RUN install2.r --error --skipinstalled DBI duckdb   && Rscript -e 'install.packages(c("mori", "mirai", "nanonext"), repos = "https://cloud.r-project.org")'   && rm -rf /tmp/downloaded_packages
+#8 CACHED
+
+#9 [ 5/15] COPY src/upstream /src/upstream
+#9 CACHED
+
+#10 [ 6/15] RUN mkdir -p /opt/lib-upstream && R CMD INSTALL --no-docs --library=/opt/lib-upstream /src/upstream
+#10 CACHED
+
+#11 [ 7/15] COPY src/spike /src/spike
+#11 DONE 0.2s
+
+#12 [ 8/15] RUN mkdir -p /opt/lib-spike && R CMD INSTALL --no-docs --library=/opt/lib-spike /src/spike
+#12 0.285 * installing *source* package ‘tinyshinyserver’ ...
+#12 0.285 ** this is package ‘tinyshinyserver’ version ‘0.3.0’
+#12 0.285 ** using staged installation
+#12 0.299 ** R
+#12 0.318 ** inst
+#12 0.320 ** byte-compile and prepare package for lazy loading
+#12 1.888 ** help
+#12 1.900 *** installing help indices
+#12 1.908 ** building package indices
+#12 2.008 ** testing if installed package can be loaded from temporary location
+#12 2.387 ** testing if installed package can be loaded from final location
+#12 2.780 ** testing if installed package keeps a record of temporary installation path
+#12 2.782 * DONE (tinyshinyserver)
+#12 DONE 2.8s
+
+#13 [ 9/15] COPY app /bench/app
+#13 DONE 0.0s
+
+#14 [10/15] COPY app-data /bench/app-data
+#14 DONE 0.0s
+
+#15 [11/15] COPY app-async /bench/app-async
+#15 DONE 0.0s
+
+#16 [12/15] COPY mizu /bench/mizu
+#16 DONE 0.0s
+
+#17 [13/15] RUN Rscript /bench/app-data/make-data.R /data 1e7
+#17 0.999 10000000 rows, 229 MB in memory
+#17 1.409 duckdb keeps downloaded extensions and secrets in a temporary directory:
+#17 1.409 ℹ /tmp/RtmpR8SIpO/duckdb
+#17 1.409 This is removed when the R session ends.
+#17 1.409 • Extensions are re-downloaded each session.
+#17 1.409 • Secrets are lost.
+#17 1.409 ℹ Run duckdb(shared_home = TRUE) (or create ~/.duckdb) to keep them (suitable for most users).
+#17 1.409 ℹ Run duckdb(shared_home = FALSE) to accept the temporary directory (and silence this message).
+#17 1.409 ℹ See ?duckdb_storage for details and alternatives.
+#17 2.670 written to /data 
+#17 DONE 2.7s
+
+#18 [14/15] COPY docker/serve.sh docker/procstat.sh docker/calibrate.R docker/VERSIONS /bench/
+#18 DONE 0.0s
+
+#19 [15/15] RUN chmod +x /bench/*.sh   && Rscript -e 'for (p in c("mizu", "mori", "mirai", "nanonext", "duckdb", "shiny")) cat(p, format(packageVersion(p)), "\n")' >> /bench/VERSIONS
+#19 DONE 0.5s
+
+#20 exporting to image
+#20 exporting layers
+#20 exporting layers 0.5s done
+#20 writing image sha256:c2b35ce07748d249a2cdae25fa56c8309e3d08dd33828302c1671489058bb0b7 done
+#20 naming to docker.io/library/tss-bench-follow done
+#20 DONE 0.5s
+upstream 0f0a76df232a992fea90d2b59a00d695d56f120a
+spike 1fa732489f555a56491d53586d8ed7acaf777a2b
