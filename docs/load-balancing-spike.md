@@ -33,6 +33,14 @@ those processes.
   shiny), and slower session start-up under extreme CPU starvation (1 vCPU,
   80 users, 8 replicas: p95 34 s against 9 s), caused by the fixed 5 s
   handshake timeout of the `websocket` package used by the existing relay.
+- **Follow-ups.** Replicas combined with async offloading (`ExtendedTask`
+  and mirai) give the best responsiveness measured: 0.3% of light
+  interactions over 250 ms on 1 vCPU at 40 users, against 25% with
+  replicas alone and 70% with async alone. For apps with large data,
+  memory limits the replica count; mori shares the data only until
+  ordinary filtering code makes each process copy the columns it touches,
+  while a read-only DuckDB file kept memory lowest at the price of slower
+  queries.
 - **mizu** (shared-memory channels) works as an optional per-replica
   telemetry channel for a workload-aware scheduler, but only through
   internal functions; see the mizu evaluation.
@@ -500,8 +508,6 @@ check, not measured under load at scale.
   pending assignments distributes evenly: the busiest of 8 replicas held
   12.5–20% of sessions).
 
-<!-- FOLLOWUP-RESULTS -->
-
 ## Known limitations and open problems
 
 **Of the design**
@@ -562,9 +568,9 @@ check, not measured under load at scale.
   not a user-visible bug, and the failure scenario's numbers for the
   victim's own sessions use the server's log rather than the client.
 
-## Planned follow-up: shared data with mori and DuckDB (conditional)
+## Follow-up: shared data with mori and DuckDB
 
-Decided 2026-11-24: if scenario B shows that replicas help, run a bounded
+Run because scenario B showed that replicas help: a bounded
 experiment on sharing an app's data between replicas next, although the
 original brief excluded shared memory. Each replica is a full R process
 with its own copy of everything the app loads, so memory, not CPU, may
@@ -595,7 +601,7 @@ arms:
   read; apps that write need one writer, SQLite in WAL mode or a database
   server.
 
-Planned scope:
+Scope:
 
 - Give the benchmark app a large dataset (a few hundred MB) and
   operations that filter and aggregate it, in each of the three arms.
@@ -607,12 +613,88 @@ Planned scope:
   to replicas when the owner dies, and whether apps must change how they
   load data. For DuckDB, record the settings each replica needs.
 
-If scenario B shows no benefit from replicas, this experiment is not run.
+### Results
 
-## Planned follow-up: replicas combined with async offloading (conditional)
+Setup: `bench/app-data/`, a data frame of 10 million rows (an integer
+category 1–100 and three numeric columns; 229 MB in R, 178 MB as a DuckDB
+file). Half of 20 users run queries (filter one random category, count it
+and aggregate two columns), the other half cheap operations; mean think
+time 0.5 s. One process ("spike, 1") or 2, 4 or 8 replicas, on 1 and 2
+vCPUs, two repetitions each (48 runs, no errors). For mori, a separate owner
+process (`share-data.R`) shares the data and stays alive, since a region can
+be mapped only while its owner holds it; in a production version the
+server process would be the owner. DuckDB connections use `threads = 1`
+and `memory_limit = 128MB`. All arms get 1 GB of `/dev/shm`; Docker's
+default 64 MB cannot hold the shared region. Results:
+`bench/results/followup-analysis/`, raw data in `bench/results/followup/`.
 
-Decided 2026-11-24, on the same condition as the mori follow-up: if
-scenario B shows that replicas help, test them together with in-session
+Container memory (cgroup, every page counted once):
+
+| | 1 process | r2 | r4 | r8 | per added replica |
+|---|---|---|---|---|---|
+| Idle, memory (own copy) | 451 MB | 773 MB | 1,419 MB | 2,721 MB | ≈ 325 MB |
+| Idle, mori | 497 MB | 593 MB | 786 MB | 1,177 MB | ≈ 97 MB |
+| Idle, DuckDB | 290 MB | 402 MB | 714 MB | 1,260 MB | ≈ 139 MB |
+| Under load, memory | 566 MB | 988 MB | 1,721 MB | 3,303 MB | |
+| Under load, mori | 777 MB | 1,203 MB | 1,845 MB | 3,331 MB | |
+| Under load, DuckDB | 490 MB | 719 MB | 1,156 MB | 2,128 MB | |
+
+(1 vCPU; 2 vCPUs within 6%.)
+
+Query latency, median / p95, and all operations per second:
+
+| | 1 process | r2 | r4 | r8 |
+|---|---|---|---|---|
+| 1 vCPU, memory | 92 / 181 ms, 33 | 105 / 290 ms, 33 | 111 / 278 ms, 34 | 143 / 325 ms, 33 |
+| 1 vCPU, mori | 103 / 244 ms, 34 | 111 / 275 ms, 33 | 135 / 373 ms, 33 | 170 / 448 ms, 33 |
+| 1 vCPU, DuckDB | 637 / 876 ms, 18 | 674 / 1,382 ms, 20 | 692 / 1,185 ms, 24 | 633 / 1,223 ms, 24 |
+| 2 vCPUs, memory | 35 / 83 ms, 37 | 38 / 79 ms, 37 | 38 / 77 ms, 37 | 38 / 76 ms, 38 |
+| 2 vCPUs, mori | 41 / 100 ms, 37 | 42 / 87 ms, 36 | 45 / 94 ms, 37 | 44 / 98 ms, 36 |
+| 2 vCPUs, DuckDB | 440 / 813 ms, 21 | 166 / 393 ms, 31 | 157 / 307 ms, 34 | 155 / 354 ms, 33 |
+
+Findings:
+
+- **mori saves memory only while the data is not touched.** Idle, a mori
+  replica costs less than a third of a replica with its own copy (97 vs. 325 MB),
+  as expected. Under the query load, the saving disappears: with 8
+  replicas, 3.33 GB with mori against 3.30 GB with private copies. The
+  cause, measured in one process: after `data$category == 5`, the process's
+  private (anonymous) memory grew by about twice the column's size (the
+  result and a copy of the column), and after `data$x[rows]` and
+  `data$y[rows]` by the size of those columns; the copies stayed after
+  `gc()`, while `sum(data$x)` read the shared pages without copying. mori's
+  source explains it: when R asks a mori vector for a *writable* data
+  pointer, mori copies the vector into private memory and keeps the copy
+  for the life of the object (`mori_vec_Dataptr()` in `src/altrep.c`,
+  "COW: materialize"). Which base R functions ask for a writable pointer
+  on read-only use is an R internals question; in R 4.6.1, comparison and
+  logical subsetting do, and those are what typical filtering code uses.
+  After a few queries, each replica therefore holds a private copy of
+  every column it filtered on or extracted.
+- **DuckDB uses the least memory under load** (2.13 GB with 8 replicas,
+  36% less than private copies), because each process's buffer pool is
+  capped and the file's pages sit once in the page cache. But its queries
+  are slower and use more CPU: in one process without load, 82 ms per
+  query at a 128 MB limit and 56 ms at 1 GB, against 23 ms for R's
+  vectorised filter on the in-memory copy (the category is unsorted, so
+  every query scans the column; sorting or partitioning by category would
+  change this). On 1 vCPU that CPU cost lowers total throughput by a third to a half. Several
+  replicas help DuckDB on 2 vCPUs (median 440 → 155 ms), since one
+  `threads = 1` connection cannot use the second core.
+- **With private copies, memory, not CPU, limits replicas**: 325 MB each
+  for a 229 MB dataset. For apps with large read-only data, the
+  practical options today are a database file with a bounded buffer pool
+  (DuckDB, SQLite) or code that keeps mori's data on read-only paths.
+  mori's README documents the copy on modification, but not that ordinary
+  read operations can trigger it; that is worth raising with its author,
+  with this reproduction, before relying on it.
+- Not measured: replica start-up time per data mode (the run's ready time
+  measures the first replica), and how mori behaves when the owner process
+  dies while replicas are mapped.
+
+## Follow-up: replicas combined with async offloading
+
+Run on the same condition as the shared-data follow-up: test replicas together with in-session
 async offloading through `shiny::ExtendedTask` and mirai, although the
 original brief excluded mirai.
 
@@ -622,7 +704,7 @@ offloading keeps a session's own long computation from freezing it, and
 everyone in the same process, but needs the app to wrap that code. A
 well-built app on a replicated server could stay responsive both ways.
 
-Planned scope:
+Scope:
 
 - A variant of the benchmark app that runs the CPU job in an
   `ExtendedTask` backed by mirai daemons.
@@ -639,7 +721,68 @@ Planned scope:
   - whether each replica should run its own daemons or all replicas
     should share one pool that the server manages and bounds.
 
-If scenario B shows no benefit from replicas, this experiment is not run.
+### Results
+
+Setup: `bench/app-async/app.R` is the benchmark app with its CPU job in an
+`ExtendedTask` that runs it with `mirai::mirai()` on local mirai daemons;
+everything else is unchanged. Scenario B (20% of users run 0.5 s
+computations) at 10, 20 and 40 users, 1 and 2 vCPUs, two repetitions (48
+runs, no errors), four arms with comparable process counts:
+
+- **sync, 1 process**: the ordinary app, as upstream runs it today;
+- **async, 1 process**: the async app with 4 daemons;
+- **sync, 4 replicas**;
+- **async, 4 replicas**, each with 1 daemon (8 R processes in all).
+
+Light operations, median / p95 and the share over 250 ms, at 40 users:
+
+| | sync, 1 process | async, 1 process | sync, 4 replicas | async, 4 replicas |
+|---|---|---|---|---|
+| 1 vCPU | 2.2 / 2.9 s, 100% | 349 / 676 ms, 70% | 8 ms / 2.5 s, 25% | 13 / 110 ms, 0.3% |
+| 2 vCPUs | 1.9 / 2.7 s, 95% | 26 / 132 ms, 0% | 10 / 851 ms, 21% | 8 / 61 ms, 0% |
+
+Heavy computations (median, jobs per second), all operations per second,
+and container memory (cgroup RSS), 40 users:
+
+| | sync, 1 process | async, 1 process | sync, 4 replicas | async, 4 replicas |
+|---|---|---|---|---|
+| 1 vCPU: heavy | 2.4 s, 1.65 | 4.6 s, 1.11 | 2.7 s, 1.43 | 6.2 s, 0.98 |
+| 1 vCPU: all ops/s | 14 | 38 | 32 | 60 |
+| 2 vCPUs: heavy | 2.2 s, 1.81 | 1.4 s, 2.48 | 795 ms, 2.56 | 1.1 s, 2.65 |
+| 2 vCPUs: all ops/s | 16 | 61 | 51 | 64 |
+| Memory | 310–320 MB | 740–770 MB | 760 MB | 1,140–1,170 MB |
+
+Findings:
+
+- **The combination gives the best responsiveness by far**, on 1 vCPU as
+  well: 0.3% of light operations over 250 ms, against 25% with replicas
+  alone and 70% with async alone. The two remove different waiting:
+  replicas keep other users' work from blocking a session without app
+  changes; async keeps the computation out of the process that serves
+  sessions, so the users who share a replica with a heavy user are no
+  longer blocked either (the p95 of replicas alone, 2.5 s, comes from
+  them).
+- **Async alone on 1 vCPU leaves every user moderately slow.** The single
+  session process competes for the one vCPU with up to 4 busy daemons and
+  can get as little as a fifth of it while all 32 light users wait on it: median
+  349 ms. Replicas alone have the opposite shape: most users at 8 ms, the
+  few behind a heavy user at seconds.
+- **Neither creates CPU.** On 1 vCPU, light users who no longer wait send
+  more operations (60 instead of 14 per second in total, since every user
+  waits for an answer before the next request), and that CPU is taken
+  from the heavy computations: 6.2 s instead of 2.4 s, 40% fewer per
+  second. On 2 vCPUs, every arm but the single synchronous process uses
+  the second core: 2.5–2.65 heavy jobs per second against 1.8.
+- **Each daemon is another R process** (about 100–110 MB here, plus any data
+  the job needs), so replicas × daemons multiplies memory, and with it
+  the data question of the previous follow-up. Whether each replica
+  should run its own daemons, or all replicas share one pool that the
+  server bounds, was not tested; with per-replica daemons, a busy replica
+  cannot borrow an idle replica's daemon.
+- Not measured: the responsiveness of the heavy user's own session while
+  its job runs (the load generator's heavy users send only heavy
+  operations). With `ExtendedTask` that session stays interactive; with
+  sync code it is frozen whatever the server does.
 
 ## Effort for a production-quality contribution
 
