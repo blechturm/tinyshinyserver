@@ -75,6 +75,11 @@ for (dir in dirs) {
     first_wave <- Filter(function(d) is.numeric(d$startup_ms) && (!churn || d$arrival_ms < 3000), detail)
     last_open <- max(c(0, vapply(first_wave, function(d) d$arrival_ms + d$startup_ms, numeric(1))))
     start_ms <- if (churn) s$warmup_s * 1000 else max(s$warmup_s * 1000, last_open + 2000)
+    # Where sessions were still opening near the end of the run (an
+    # overloaded server), the window is the usual one after the warm-up, and
+    # the slow startups are reported as such
+    late_sessions <- start_ms > s$duration_s * 1000 - 10000
+    if (late_sessions) start_ms <- s$warmup_s * 1000
     end_ms <- s$duration_s * 1000
     window <- (end_ms - start_ms) / 1000
     raw <- utils::read.csv(sub("\\.json$", ".csv", json), colClasses = c(error = "character", replica = "character", pid = "character"))
@@ -112,7 +117,8 @@ for (dir in dirs) {
       rss_proxy_mb = if (is.null(mid)) NA else sum(mid$rss_kb[mid$role == "proxy"]) / 1024,
       rss_apps_mb = if (is.null(mid)) NA else sum(mid$rss_kb[mid$role == (if (key$config == "direct") "proxy" else "app")]) / 1024,
       cgroup_mb = mem[["current"]], cgroup_rss_mb = mem[["rss"]], cgroup_peak_mb = peak,
-      calib_per_ms = calib, heavy_on_busiest = heavy_max, heavy_users = sum(heavy),
+      calib_per_ms = calib, late_sessions = late_sessions, startup_max_ms = s$startup_ms$max %||% NA,
+      heavy_on_busiest = heavy_max, heavy_users = sum(heavy),
       demand_cores = demand, sessions_max_share = if (length(dist)) max(dist) / sum(dist) else NA)
     if (any(ok) || nrow(inside)) {
       rows[[length(rows) + 1]] <- data.frame(key, experiment = experiment, op = inside$op,
@@ -168,7 +174,7 @@ summ <- do.call(rbind, lapply(run_groups, function(g) {
   row <- g[1, keys]
   for (v in c("ops_per_s", "error_rate", "startup_p50_ms", "startup_p95_ms", "proxy_cores", "app_cores",
               "rss_proxy_mb", "rss_apps_mb", "cgroup_mb", "cgroup_rss_mb", "cgroup_peak_mb", "calib_per_ms",
-              "heavy_on_busiest", "demand_cores", "sessions_max_share", "window_s")) {
+              "heavy_on_busiest", "demand_cores", "sessions_max_share", "window_s", "startup_max_ms", "late_sessions")) {
     row[[v]] <- stats::median(g[[v]], na.rm = TRUE)
     row[[paste0(v, "_min")]] <- suppressWarnings(min(g[[v]], na.rm = TRUE))
     row[[paste0(v, "_max")]] <- suppressWarnings(max(g[[v]], na.rm = TRUE))
