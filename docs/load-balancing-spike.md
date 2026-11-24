@@ -313,9 +313,13 @@ Two side effects matter for a server:
 - **The peer's allocator is retuned.** `peer_main()` calls
   `child_prologue()`, which on glibc sets `M_MMAP_THRESHOLD` to 32 MB and
   `M_TRIM_THRESHOLD` to 128 MB in the peer, the Shiny app process here,
-  unless `GLIBC_TUNABLES` mentions `glibc.malloc`. Each such process may
+  unless `GLIBC_TUNABLES` mentions `glibc.malloc`. Each such process could
   then keep up to 128 MB of freed heap instead of returning it to the
-  system: an unrequested change of memory behaviour in the app.
+  system. The prototype starts telemetry replicas with
+  `GLIBC_TUNABLES=glibc.malloc.check=0` (the default value, which only
+  serves to switch mizu's tuning off) unless the variable is already set.
+- **The peer attaches mizu to the search path** (`attachNamespace("mizu")`)
+  and loads `later` through it, inside the app's process.
 
 ### Integration with the existing process lifecycle
 
@@ -327,23 +331,37 @@ the health check are unchanged.
 - `start_app()` creates the channel's region first (mizu's internal
   `mizu_channel_create`, `mizu_channel_suffix`) and passes the join token
   to the callr function as one more argument.
-- The callr function's first act, when given a token, is to store its own
-  arguments and itself in the global environment and call
-  `mizu:::peer_main(token)`. The staged expression starts the heartbeat and
-  a command handler, then calls the same function again without the token,
-  which runs the app exactly as before. When the app returns or fails,
-  `peer_main()` closes the channel and quits with the app's status, so the
-  health check still tells a crash from a clean exit.
+- The callr function sets up the app's environment, library paths and
+  profile exactly as before. Only then, given a token, does it call
+  `mizu:::peer_main(token)`, so that mizu and `later` load from the app's
+  own library (a renv app that pins other versions of `later`, `Rcpp` or
+  `rlang` would otherwise get the server's; a first version attached before
+  the profile ran, which review caught). The staged expression starts the
+  heartbeat and a command handler, then runs the app through the same code
+  as without telemetry. When the app returns or fails, `peer_main()` closes
+  the channel and quits with the app's status (0, or 1 on error), so the
+  health check still tells a crash from a clean exit. A process that cannot
+  attach, for example because the server gave up waiting or the app's
+  library lacks mizu, logs this and runs the app without telemetry.
 - The server never calls the blocking `mizu_channel()`. It polls
   `mizu_channel_ready_wait(ch, 0)` from a `later` callback every 20 ms
   until the peer attaches (typically 0.1–0.3 s, the child's R startup),
   then installs `mizu_recv_handler()`. With `mizu_channel()` itself, each
   replica start or restart would freeze every session of every app for the
   child's R startup.
-- A `mizu_peer_gone` condition runs the existing health check at once,
-  which closes the replica's sessions and schedules its restart as usual.
-  The scheduler does not rely on it: it reads process liveness at each
-  choice anyway.
+- A terminal condition on the channel (`mizu_peer_gone` for a killed
+  process, `mizu_closed` or a remote error when the app ended) runs the
+  existing health check at once, which closes the replica's sessions and
+  schedules its restart as usual. The scheduler does not rely on it: it
+  reads process liveness at each choice anyway.
+- Every telemetry callback on the server runs inside its own error
+  handler. The server's main loop treats an uncaught error as fatal and
+  shuts down, and the app's own code shares the process that holds the
+  channel: a first version could be crashed by an app that sent a
+  malformed message on it. Messages that are not a heartbeat are ignored.
+- At its first channel, the server calls `mizu_prune()` to remove regions
+  that a previous server left in `/dev/shm` when it was killed together
+  with all its replicas.
 
 This works with callr and without a second supervisor, but only through
 mizu internals (`:::`): `mizu_channel_create`, `mizu_channel_suffix`,
@@ -364,15 +382,21 @@ all.
 
 ### Telemetry and the workload-aware scheduler
 
-Each replica sends five numbers every 100 ms over its channel: sequence
+Each replica sends six numbers every 100 ms over its channel: sequence
 number, event-loop lag, CPU seconds used, open Shiny sessions (from Shiny's
-internal `appsByToken`, so the app needs no change), and its wall clock.
+internal `appsByToken`, so the app needs no change), its wall clock (for
+the delivery delay) and its elapsed time.
 A full ring drops the heartbeat. A busy replica cannot send at all, so
 **missing heartbeats are the signal**: a replica whose last heartbeat is
 older than 300 ms counts as fully busy, never as idle. Its recent busy
-fraction is a moving average (about 2 s) of the larger of its CPU share and
-its lag share, measured on the replica's own clock so that heartbeats that
-queue up while the server is busy do not distort it.
+fraction is a moving average, with a 2 s time constant, of the larger of
+its CPU share and its lag share. Both are measured on the replica's own
+elapsed time, so that heartbeats that queue up while the server is busy do
+not distort them, and each sample is weighted by the time it covers, so
+that a 3 s computation, reported by a single late heartbeat, counts for
+3 s (a first version weighted per heartbeat; review caught it). A running
+replica without telemetry counts as 0.5 busy, and a stopped one that a
+visitor would have to start counts as fully busy.
 
 `workload_aware` = `least_connections` + 2 × busy fraction. It is
 deliberately simple: one more term in the existing load, not a model.

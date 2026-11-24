@@ -26,8 +26,10 @@
 TELEMETRY_INTERVAL <- 0.1
 TELEMETRY_STALE_SECONDS <- 0.3
 TELEMETRY_BUSY_WEIGHT <- 2
-# Weight of the newest busy sample in the moving average: about 2 s of memory
-TELEMETRY_EWMA_ALPHA <- 0.05
+# Time constant, in seconds, of the moving average of a replica's busy share
+TELEMETRY_EWMA_SECONDS <- 2
+# The mizu version whose internals this code uses
+TELEMETRY_MIZU_VERSION <- "0.1.1"
 # Ring geometry: heartbeats are 40 bytes, and a ring that fills while the
 # server is busy drops heartbeats rather than blocking. The defaults of
 # mizu_channel() would take 16 MB of shared memory per replica, and Docker
@@ -37,7 +39,17 @@ TELEMETRY_SLOT_SIZE <- 128L
 
 replica_telemetry_enabled <- function() {
   identical(Sys.getenv("TSS_REPLICA_TELEMETRY"), "mizu") && requireNamespace("mizu", quietly = TRUE) &&
-    requireNamespace("later", quietly = TRUE)
+    utils::packageVersion("mizu") == TELEMETRY_MIZU_VERSION
+}
+
+# Run a telemetry callback on the event loop. An error in it, as from a
+# malformed message that an app sent on its channel, must not reach the
+# server's loop, which would shut the server down.
+telemetry_safely <- function(what, code) {
+  tryCatch(code, error = function(e) {
+    logger::log_warn("Replica telemetry: {what} failed: {error}", what = what, error = conditionMessage(e))
+    NULL
+  })
 }
 
 # The expression that the replica's process evaluates as mizu's peer, with
@@ -51,10 +63,12 @@ replica_peer_expr <- function(interval = TELEMETRY_INTERVAL) {
       tick <- function(due) {
         now <- proc.time()
         seq <<- seq + 1
-        # A full ring drops the heartbeat; a closed one ends them
+        # seq, lag, CPU seconds, sessions, wall clock (for the delay), and
+        # elapsed time (for the busy share). A full ring drops the
+        # heartbeat; a closed channel or a dead server ends them.
         sent <- mizu::mizu_send(ch, c(seq, max(0, now[["elapsed"]] - due),
-          now[["user.self"]] + now[["sys.self"]], sessions(), as.numeric(Sys.time())))
-        if (!inherits(sent, "mizu_closed")) {
+          now[["user.self"]] + now[["sys.self"]], sessions(), as.numeric(Sys.time()), now[["elapsed"]]))
+        if (isTRUE(sent) || inherits(sent, "mizu_full")) {
           due <- now[["elapsed"]] + interval
           later::later(function() tick(due), interval)
         }
@@ -66,14 +80,21 @@ replica_peer_expr <- function(interval = TELEMETRY_INTERVAL) {
         if (identical(command, "stop")) shiny::stopApp()
       })
     })
-    do.call(.tss_app_main, .tss_app_args)
+    .tss_app_run()
   })
 }
 
 # A channel for a replica that is about to start: the handle, and the token
 # that its process attaches with
-replica_channel_create <- function() {
+replica_channel_create <- function(config = NULL) {
   ns <- asNamespace("mizu")
+  # Regions that a server killed with all its replicas left in /dev/shm;
+  # none on Windows. Once per server.
+  if (!is.null(config) && is.null(config$replica_state[["pruned"]])) {
+    assign("pruned", TRUE, envir = config$replica_state)
+    pruned <- tryCatch(mizu::mizu_prune(), error = function(e) NULL)
+    if (length(pruned)) logger::log_info("Removed {n} orphaned mizu regions", n = length(pruned))
+  }
   ch <- .Call(ns$mizu_channel_create, replica_peer_expr(), TELEMETRY_CAPACITY, TELEMETRY_SLOT_SIZE, 0, FALSE)
   list(ch = ch, token = .Call(ns$mizu_channel_suffix, ch))
 }
@@ -82,7 +103,8 @@ replica_channel_create <- function() {
 # then receive its heartbeats. mizu_channel() itself waits in a blocking call
 # for the peer, which would stall every app's traffic for the R startup of
 # each replica, so its steps are taken here one by one.
-replica_channel_watch <- function(config, process_manager, app_name, channel, process, started = Sys.time()) {
+replica_channel_watch <- function(config, process_manager, app_name, channel, process,
+                                  started = config$clock_seconds()) {
   force(started)
   ns <- asNamespace("mizu")
   key <- paste0("telemetry:", app_name)
@@ -91,14 +113,14 @@ replica_channel_watch <- function(config, process_manager, app_name, channel, pr
     return(invisible(FALSE))
   }
   if (!isTRUE(.Call(ns$mizu_channel_ready_wait, channel$ch, 0))) {
-    if (!is_process_alive(process) || difftime(Sys.time(), started, units = "secs") > config$APP_STARTUP_TIMEOUT_SECONDS) {
+    if (!is_process_alive(process) || config$clock_seconds() - started > config$APP_STARTUP_TIMEOUT_SECONDS) {
       logger::log_warn("Replica {app_name} did not attach to its telemetry channel", app_name = app_name)
       .Call(ns$mizu_channel_destroy, channel$ch)
       return(invisible(FALSE))
     }
-    later::later(function() {
+    later::later(function() telemetry_safely("waiting for a replica to attach", {
       replica_channel_watch(config, process_manager, app_name, channel, process, started)
-    }, 0.02)
+    }), 0.02)
     return(invisible(FALSE))
   }
   state <- new.env(parent = emptyenv())
@@ -110,29 +132,37 @@ replica_channel_watch <- function(config, process_manager, app_name, channel, pr
   state$delays <- numeric()
   assign(key, state, envir = config$replica_state)
   logger::log_info("Replica {app_name} attached to its telemetry channel after {seconds} s",
-    app_name = app_name, seconds = round(as.numeric(difftime(Sys.time(), started, units = "secs")), 3)
+    app_name = app_name, seconds = round(config$clock_seconds() - started, 3)
   )
-  mizu::mizu_recv_handler(channel$ch, function(message) {
+  mizu::mizu_recv_handler(channel$ch, function(message) telemetry_safely("receiving from a replica", {
     if (inherits(message, "condition")) {
       replica_channel_ended(config, process_manager, app_name, state, message)
     } else {
       note_heartbeat(config, state, message)
     }
-  })
+  }))
   invisible(TRUE)
 }
 
 note_heartbeat <- function(config, state, beat) {
+  # Anything else on the channel, which the app's own code could send, is
+  # ignored
+  if (!is.double(beat) || length(beat) != 6 || anyNA(beat[-4])) {
+    return(invisible(FALSE))
+  }
   now <- config$clock_seconds()
   # The share of the time since the last heartbeat that the replica was busy:
   # its CPU time, or its lag for time spent blocked without using the CPU.
-  # Measured on the replica's clock: heartbeats that wait while this event
-  # loop is busy arrive together.
-  wall <- beat[[5]] - (state$peer_wall %||% beat[[5]])
-  state$peer_wall <- beat[[5]]
+  # Measured on the replica's own elapsed time: heartbeats that wait while
+  # this event loop is busy arrive together. The moving average weighs each
+  # sample by the time it covers, so that one long busy stretch, which
+  # yields a single late heartbeat, counts for its whole length.
+  wall <- beat[[6]] - (state$peer_elapsed %||% beat[[6]])
+  state$peer_elapsed <- beat[[6]]
   if (!is.null(state$cpu) && wall > 0) {
     sample <- min(1, max((beat[[3]] - state$cpu) / wall, beat[[2]] / (TELEMETRY_INTERVAL + beat[[2]])))
-    state$busy <- (1 - TELEMETRY_EWMA_ALPHA) * state$busy + TELEMETRY_EWMA_ALPHA * sample
+    alpha <- 1 - exp(-wall / TELEMETRY_EWMA_SECONDS)
+    state$busy <- (1 - alpha) * state$busy + alpha * sample
   }
   state$cpu <- beat[[3]]
   state$lag <- beat[[2]]
@@ -141,7 +171,8 @@ note_heartbeat <- function(config, state, beat) {
   state$beats <- (state$beats %||% 0) + 1
   # How long the heartbeat took to reach this event loop, kept for the
   # benchmark: the last 1000
-  state$delays <- utils::tail(c(state$delays, as.numeric(Sys.time()) - beat[[5]]), 1000)
+  state$delays <- utils::tail(c(state$delays, as.numeric(Sys.time()) - beat[[5]]), 200)
+  invisible(TRUE)
 }
 
 replica_channel_ended <- function(config, process_manager, app_name, state, condition) {
@@ -149,10 +180,11 @@ replica_channel_ended <- function(config, process_manager, app_name, state, cond
   if (identical(config$replica_state[[key]], state)) rm(list = key, envir = config$replica_state)
   # The peer has gone, so closing waits for nothing
   suppressWarnings(tryCatch(mizu::mizu_close(state$ch, timeout = 0), error = function(e) NULL))
-  if (!inherits(condition, "mizu_peer_gone")) {
-    return(invisible())
-  }
-  logger::log_warn("Replica {app_name}'s process ended, as its telemetry channel reports", app_name = app_name)
+  # The peer is gone (killed), closed (its app returned) or failed (its app
+  # raised an error): in each case the process is ending
+  logger::log_warn("Replica {app_name}'s process ended, as its telemetry channel reports: {how}",
+    app_name = app_name, how = class(condition)[[1]]
+  )
   state$gone_at <- Sys.time()
   # The health check finds the exited process and restarts the replica as
   # usual; run it now rather than at its next turn
@@ -165,12 +197,17 @@ replica_channel_ended <- function(config, process_manager, app_name, state, cond
 }
 
 # How busy a replica is, from 0 to 1, for the workload_aware scheduler: its
-# recent busy fraction, or 1 while its heartbeats are overdue. NULL without
-# telemetry.
+# recent busy fraction, or 1 while its heartbeats are overdue. A replica
+# without telemetry is neither known to be idle nor busy: 0.5, or 1 for one
+# that is not running, which a visitor would have to wait to start. NULL when
+# telemetry is off.
 replica_busy <- function(config, name) {
+  if (!replica_telemetry_enabled()) {
+    return(NULL)
+  }
   state <- config$replica_state[[paste0("telemetry:", name)]]
   if (is.null(state)) {
-    return(NULL)
+    return(if (is_process_alive(config$get_app_process(name))) 0.5 else 1)
   }
   if (config$clock_seconds() - state$last_seen > TELEMETRY_STALE_SECONDS) {
     return(1)
@@ -181,6 +218,9 @@ replica_busy <- function(config, name) {
 # Telemetry of every replica, for the management API and the benchmark
 replica_telemetry_summary <- function(config) {
   keys <- grep("^telemetry:", ls(config$replica_state), value = TRUE)
+  if (length(keys) == 0) {
+    return(list())
+  }
   stats::setNames(lapply(keys, function(key) {
     state <- config$replica_state[[key]]
     delays <- state$delays

@@ -52,6 +52,8 @@ test_that("workload_aware without telemetry chooses as least_connections does", 
 })
 
 test_that("workload_aware avoids a busy replica that least_connections would choose", {
+  skip_if_not_installed("mizu", "0.1.1")
+  local_telemetry_setting("mizu")
   for (scheduler in c("least_connections", "workload_aware")) {
     config <- telemetry_config(scheduler)
     config$add_ws_connection("a", list(app_name = "demo-1"))
@@ -67,29 +69,49 @@ test_that("workload_aware avoids a busy replica that least_connections would cho
 })
 
 test_that("overdue heartbeats make a replica count as busy, not idle", {
+  skip_if_not_installed("mizu", "0.1.1")
+  local_telemetry_setting("mizu")
   config <- telemetry_config()
   fake_telemetry(config, "demo-1", busy = 0, age = TELEMETRY_STALE_SECONDS + 0.5)
   fake_telemetry(config, "demo-2", busy = 0.2)
   expect_equal(replica_busy(config, "demo-1"), 1)
   expect_equal(replica_busy(config, "demo-2"), 0.2)
-  expect_null(replica_busy(config, "demo-3"))
+  # Without telemetry a running replica is neither idle nor busy, and one
+  # that a visitor would have to start counts as busy
+  expect_equal(replica_busy(config, "demo-3"), 0.5)
+  config$add_app_process("demo-3", list(is_alive = function() FALSE))
+  expect_equal(replica_busy(config, "demo-3"), 1)
+  local_telemetry_setting(NA)
+  expect_null(replica_busy(config, "demo-2"))
 })
 
-test_that("heartbeats measure busyness on the replica's clock", {
+test_that("heartbeats measure busyness on the replica's clock, weighted by time", {
   config <- telemetry_config()
   state <- fake_telemetry(config, "demo-1", busy = 0)
-  # seq, lag, cpu seconds, sessions, wall clock
-  note_heartbeat(config, state, c(1, 0, 10, 2, 1000))
+  # seq, lag, cpu seconds, sessions, wall clock, elapsed
+  note_heartbeat(config, state, c(1, 0, 10, 2, 1000, 50))
   expect_equal(state$busy, 0)
   # The next one arrives with it, as after a busy turn of the server's
-  # event loop, but 0.1 s later on the replica, which used 0.1 s of CPU
-  note_heartbeat(config, state, c(2, 0, 10.1, 2, 1000.1))
-  expect_equal(state$busy, TELEMETRY_EWMA_ALPHA)
-  # A lag counts as busy time, as for a replica blocked in Sys.sleep()
-  note_heartbeat(config, state, c(3, 1, 10.1, 2, 1001.2))
-  expect_gt(state$busy, TELEMETRY_EWMA_ALPHA)
+  # event loop, but 0.1 s later on the replica, which used all of it
+  note_heartbeat(config, state, c(2, 0, 10.1, 2, 1000.1, 50.1))
+  short <- 1 - exp(-0.1 / TELEMETRY_EWMA_SECONDS)
+  expect_equal(state$busy, short)
+  # One long stretch blocked in Sys.sleep(), reported by one late heartbeat,
+  # counts for its whole length
+  note_heartbeat(config, state, c(3, 2, 10.1, 2, 1002.2, 52.2))
+  expect_gt(state$busy, 0.6)
   expect_equal(state$sessions, 2)
   expect_length(state$delays, 3)
+})
+
+test_that("a malformed message on a channel is ignored", {
+  config <- telemetry_config()
+  state <- fake_telemetry(config, "demo-1", busy = 0.3)
+  for (message in list(1, "stop", list(1, 2, 3, 4, 5, 6), c(1, 2, 3), c(1, NA, 3, 4, 5, 6))) {
+    expect_false(note_heartbeat(config, state, message))
+  }
+  expect_equal(state$busy, 0.3)
+  expect_null(telemetry_safely("a test", stop("boom")))
 })
 
 test_that("a replica's process reports heartbeats and its death over mizu", {
@@ -138,4 +160,68 @@ test_that("a replica's process reports heartbeats and its death over mizu", {
   expect_true(wait(function() !process$is_alive(), 10))
   expect_equal(process$get_exit_status(), 0)
   expect_false(process_failed(process))
+})
+
+test_that("a replica that cannot attach to its channel runs without telemetry", {
+  skip_on_cran()
+  skip_if_not_installed("mizu", "0.1.1")
+  local_telemetry_setting("mizu")
+  app_dir <- tempfile("tss-telemetry-app")
+  dir.create(app_dir)
+  writeLines("shiny::shinyApp(shiny::fluidPage(), function(input, output) {})", file.path(app_dir, "app.R"))
+  log_dir <- tempfile("tss-telemetry-logs")
+  on.exit(unlink(c(app_dir, log_dir), recursive = TRUE), add = TRUE)
+  config <- ShinyServerConfig$new()
+  config$config <- list(
+    apps = list(list(name = "demo-1", path = app_dir, resident = TRUE, replica_of = "demo",
+      scheduler = "workload_aware", port = sample(40000:45000, 1))),
+    log_dir = log_dir, restart_delay = 60, health_check_interval = 10
+  )
+  # A token that names no channel
+  local_mocked_bindings(
+    replica_channel_create = function(config = NULL) list(ch = NULL, token = "ffffffff_ffff"),
+    replica_channel_watch = function(...) invisible(FALSE)
+  )
+  manager <- create_process_manager(config)
+  expect_true(manager$start_app(config$config$apps[[1]]))
+  on.exit(stop_test_app_processes(config), add = TRUE)
+  url <- paste0("http://127.0.0.1:", config$config$apps[[1]]$port, "/")
+  deadline <- Sys.time() + 30
+  served <- FALSE
+  while (!served && Sys.time() < deadline) {
+    served <- tryCatch(curl::curl_fetch_memory(url)$status_code == 200, error = function(e) FALSE)
+    if (!served) Sys.sleep(0.2)
+  }
+  expect_true(served)
+  expect_true(config$get_app_process("demo-1")$is_alive())
+  expect_match(paste(readLines(file.path(log_dir, "demo-1_error.log")), collapse = "
+"), "Running without telemetry")
+})
+
+test_that("an app that fails as a telemetry peer fails as before", {
+  skip_on_cran()
+  skip_if_not_installed("mizu", "0.1.1")
+  local_telemetry_setting("mizu")
+  app_dir <- tempfile("tss-telemetry-app")
+  dir.create(app_dir)
+  writeLines("stop('the app does not start')", file.path(app_dir, "app.R"))
+  log_dir <- tempfile("tss-telemetry-logs")
+  on.exit(unlink(c(app_dir, log_dir), recursive = TRUE), add = TRUE)
+  config <- ShinyServerConfig$new()
+  config$config <- list(
+    apps = list(list(name = "demo-1", path = app_dir, resident = TRUE, replica_of = "demo",
+      scheduler = "workload_aware", port = sample(40000:45000, 1))),
+    log_dir = log_dir, restart_delay = 60, health_check_interval = 10
+  )
+  manager <- create_process_manager(config)
+  expect_true(manager$start_app(config$config$apps[[1]]))
+  process <- config$get_app_process("demo-1")
+  on.exit({
+    manager$cancel_pending_restarts()
+    stop_test_app_processes(config)
+  }, add = TRUE)
+  deadline <- Sys.time() + 30
+  while (process$is_alive() && Sys.time() < deadline) later::run_now(0.05)
+  expect_false(process$is_alive())
+  expect_true(process_failed(process))
 })

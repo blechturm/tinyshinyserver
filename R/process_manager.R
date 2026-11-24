@@ -642,7 +642,7 @@ ProcessManager <- setRefClass("ProcessManager",
       # replica_telemetry.R
       telemetry <- NULL
       if (!is.null(app_config$replica_of) && replica_telemetry_enabled()) {
-        telemetry <- tryCatch(replica_channel_create(), error = function(e) {
+        telemetry <- tryCatch(replica_channel_create(config), error = function(e) {
           logger::log_warn("No telemetry channel for {app_name}: {error}", app_name = app_name, error = conditionMessage(e))
           NULL
         })
@@ -667,14 +667,6 @@ ProcessManager <- setRefClass("ProcessManager",
                  quarto_bin, environ_libraries, library_file, profile_file, profile_setting,
                  profile_chosen, environ_file, process_environ_file, drop_renv_project,
                  telemetry_token = NULL) {
-          if (!is.null(telemetry_token)) {
-            # mizu's peer runs the expression that the server staged, which
-            # calls this function again, without the token, to run the app
-            assign(".tss_app_args", utils::modifyList(mget(names(formals(sys.function())), environment()),
-              list(telemetry_token = NULL), keep.null = TRUE), envir = globalenv())
-            assign(".tss_app_main", sys.function(), envir = globalenv())
-            return(mizu:::peer_main(telemetry_token))
-          }
           if (profile_chosen) {
             # The profile that the app's environment file chose. Processes
             # that the app starts, such as the R session that renders a Quarto
@@ -716,39 +708,54 @@ ProcessManager <- setRefClass("ProcessManager",
               })
             }
           }
-          if (type == "qmd") {
-            render <- needs_render(file, log_dir, state_file)
-            message(if (render) "Rendering " else "Serving the rendered page of ", file)
-            if (render) render_document(file, attr(render, "sources"), state_file, quarto_bin, attr(render, "snapshot"))
-            # As quarto::quarto_serve() does: the rendered page is served
-            # without rmarkdown rendering it again
-            Sys.setenv(RMARKDOWN_RUN_PRERENDER = "0")
-            rmarkdown::run(file, shiny_args = list(
-              port = port,
-              host = "127.0.0.1",
-              launch.browser = FALSE
-            ))
-          } else if (type == "rmd") {
-            # The document chosen here is the one served at the app's root.
-            # rmarkdown::run() would otherwise choose its own, among the .qmd
-            # files of the directory as well.
-            rmarkdown::run(
-              file = file,
-              default_file = basename(file),
-              shiny_args = list(
+          run_app <- function() {
+            if (type == "qmd") {
+              render <- needs_render(file, log_dir, state_file)
+              message(if (render) "Rendering " else "Serving the rendered page of ", file)
+              if (render) render_document(file, attr(render, "sources"), state_file, quarto_bin, attr(render, "snapshot"))
+              # As quarto::quarto_serve() does: the rendered page is served
+              # without rmarkdown rendering it again
+              Sys.setenv(RMARKDOWN_RUN_PRERENDER = "0")
+              rmarkdown::run(file, shiny_args = list(
+                port = port,
+                host = "127.0.0.1",
+                launch.browser = FALSE
+              ))
+            } else if (type == "rmd") {
+              # The document chosen here is the one served at the app's root.
+              # rmarkdown::run() would otherwise choose its own, among the .qmd
+              # files of the directory as well.
+              rmarkdown::run(
+                file = file,
+                default_file = basename(file),
+                shiny_args = list(
+                  port = port,
+                  host = "127.0.0.1",
+                  launch.browser = FALSE
+                )
+              )
+            } else {
+              shiny::runApp(
+                appDir = app_path,
                 port = port,
                 host = "127.0.0.1",
                 launch.browser = FALSE
               )
-            )
-          } else {
-            shiny::runApp(
-              appDir = app_path,
-              port = port,
-              host = "127.0.0.1",
-              launch.browser = FALSE
-            )
+            }
           }
+          # With telemetry, the app runs as mizu's peer: peer_main()
+          # attaches to the channel, and evaluates the expression that the
+          # server staged, which starts the heartbeat and calls run_app().
+          # It attaches only now, once the app's own library paths and
+          # profile apply, so that mizu and later load from them. A replica
+          # that cannot attach runs without telemetry.
+          if (!is.null(telemetry_token)) {
+            assign(".tss_app_run", run_app, envir = globalenv())
+            tryCatch(mizu:::peer_main(telemetry_token), error = function(e) {
+              message("Running without telemetry: ", conditionMessage(e))
+            })
+          }
+          run_app()
         },
         args = list(
           app_path = app_path,
@@ -774,7 +781,10 @@ ProcessManager <- setRefClass("ProcessManager",
         stderr = error_log,
         system_profile = TRUE,
         user_profile = FALSE,
-        env = c(callr::rcmd_safe_env(), R_ENVIRON_USER = process_environ_file),
+        env = c(callr::rcmd_safe_env(), R_ENVIRON_USER = process_environ_file,
+          # mizu's peer would retune the app's malloc on glibc unless
+          # GLIBC_TUNABLES names a malloc tunable; this one is the default
+          if (!is.null(telemetry) && !nzchar(Sys.getenv("GLIBC_TUNABLES"))) c(GLIBC_TUNABLES = "glibc.malloc.check=0")),
         # Passed on to processx: the directory the app's R session starts in
         wd = app_path,
         # Stop the app even if this R session dies without cleaning up
