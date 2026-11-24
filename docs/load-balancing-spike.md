@@ -201,7 +201,12 @@ The upstream suite ran before and after every change:
 | | Passed | Failed | Skipped |
 |---|---|---|---|
 | Upstream `0f0a76d` | 3503 | 0 | 1 (no Quarto CLI) |
-| Spike, final | see below | 0 | 1 |
+| Spike, final (`101aff5`, mizu 0.1.1 installed) | 3630 | 0 | 1 (no Quarto CLI) |
+
+Of the 3630, 86 are in `test-replicas.R` and 41 in
+`test-replica-telemetry.R`; the rest are upstream's, unchanged. The one
+warning, in an upstream example test, is that the installed shiny was
+built under R 4.6.2.
 
 `tests/testthat/test-replicas.R` covers backward compatibility, expansion,
 validation (including prefix-matched fields such as `replicas_note`, found
