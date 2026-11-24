@@ -296,6 +296,38 @@ Planned scope:
 
 If scenario B shows no benefit from replicas, this experiment is not run.
 
+## Planned follow-up: replicas combined with async offloading (conditional)
+
+Decided 2026-11-24, on the same condition as the mori follow-up: if
+scenario B shows that replicas help, test them together with in-session
+async offloading through `shiny::ExtendedTask` and mirai, although the
+original brief excluded mirai.
+
+The two address different blocking. Replicas keep other users'
+computations from blocking a session, without app changes; async
+offloading keeps a session's own long computation from freezing it, and
+everyone in the same process, but needs the app to wrap that code. A
+well-built app on a replicated server could stay responsive both ways.
+
+Planned scope:
+
+- A variant of the benchmark app that runs the CPU job in an
+  `ExtendedTask` backed by mirai daemons.
+- Scenario B on 1 and 2 vCPUs, for: one process synchronous (upstream),
+  replicas synchronous, one process with async, and replicas with async.
+  Measure the latency of lightweight operations, including those of the
+  user whose job is running, the jobs' own latency, throughput, and memory.
+- Questions to answer:
+  - async creates no CPU: on 1 vCPU the jobs compete with everything else
+    for the same core, so how much does responsiveness gain, and what does
+    job throughput lose?
+  - process count multiplies (replicas times daemons, each with its own
+    copy of the app's data), which ties this to the mori follow-up;
+  - whether each replica should run its own daemons or all replicas
+    should share one pool that the server manages and bounds.
+
+If scenario B shows no benefit from replicas, this experiment is not run.
+
 ## Effort for a production-quality contribution
 
 The core change is small because it reuses everything; most of the work
