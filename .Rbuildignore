@@ -12,3 +12,4 @@
 ^\.github$
 ^CRAN-SUBMISSION$
 ^tests/browser$
+^bench$
