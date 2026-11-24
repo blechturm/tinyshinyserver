@@ -275,24 +275,50 @@ under limitations.
   not a user-visible bug, and the failure scenario's numbers for the
   victim's own sessions use the server's log rather than the client.
 
-## Planned follow-up: shared data with mori (conditional)
+## Planned follow-up: shared data with mori and DuckDB (conditional)
 
 Decided 2026-11-24: if scenario B shows that replicas help, run a bounded
-mori experiment next, although the original brief excluded shared memory.
-Each replica is a full R process with its own copy of everything the app
-loads (about 145 MB for the benchmark app, plus any dataset per replica),
-so memory, not CPU, may limit how many replicas a small machine can run.
-mori could let replicas map one shared copy of a dataset instead.
+experiment on sharing an app's data between replicas next, although the
+original brief excluded shared memory. Each replica is a full R process
+with its own copy of everything the app loads, so memory, not CPU, may
+limit how many replicas a small machine can run.
+
+Preliminary scenario B measurements (1 vCPU) put the base cost at about
+150 MB of private memory per replica for an app with essentially no data:
+container memory was 1.31 GB with 8 replicas against 0.34 GB upstream, and
+summed process RSS (1.49 GB) was close to it, so little is shared today.
+That base is R's heap and the loaded packages, which no data-sharing
+technique removes; only starting replicas by forking one pre-loaded
+process could share it copy-on-write, with known catches (R's garbage
+collector un-shares pages as it marks objects; no fork on Windows; callr
+does not fork). What can be shared is the app's data, compared in three
+arms:
+
+- **Per replica in memory** (today): every replica loads its own copy.
+- **mori**: one copy of the R objects in shared memory, mapped by every
+  replica without copying.
+- **DuckDB, read-only**: the data in a DuckDB (or Parquet) file that every
+  replica opens with `read_only = TRUE`, querying only what it needs; the
+  operating system's page cache holds the file's hot pages once for all
+  processes. Each connection needs explicit limits, `threads` (DuckDB is
+  multithreaded by default, which would oversubscribe a 1-vCPU machine
+  several times over with eight replicas) and `memory_limit` (by default
+  80% of RAM, per process, with a buffer pool that is not shared). DuckDB
+  allows many read-only processes or one writer, so it suits apps that
+  read; apps that write need one writer, SQLite in WAL mode or a database
+  server.
 
 Planned scope:
 
-- Give the benchmark app a large dataset (a few hundred MB).
-- Measure memory and startup time for 1, 2, 4 and 8 replicas, with and
-  without sharing the dataset through mori.
+- Give the benchmark app a large dataset (a few hundred MB) and
+  operations that filter and aggregate it, in each of the three arms.
+- Measure, for 1, 2, 4 and 8 replicas on 1 and 2 vCPUs: container memory
+  (cgroup, shared pages once) and its peak, replica startup time, and the
+  latency of the data operations under scenario B's load.
 - Read mori's API and source, as was done for mizu: which process should
   own the shared region when replicas restart independently, what happens
   to replicas when the owner dies, and whether apps must change how they
-  load data.
+  load data. For DuckDB, record the settings each replica needs.
 
 If scenario B shows no benefit from replicas, this experiment is not run.
 
