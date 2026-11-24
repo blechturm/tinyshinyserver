@@ -1,0 +1,361 @@
+{
+ "scenario": "B",
+ "users": 40,
+ "session_ops": 0,
+ "duration_s": 32,
+ "warmup_s": 8,
+ "url": "http://tss-server:3838/",
+ "sessions": 40,
+ "session_errors": 0,
+ "errors": 0,
+ "startup_ms": {
+  "p50": 4349.45574,
+  "p95": 4989.315994,
+  "max": 4999.403378000001
+ },
+ "distribution": {
+  "(failed)": 40
+ },
+ "ops": {
+  "fast": {
+   "n": 255,
+   "errors": 0,
+   "throughput_per_s": 10.625,
+   "p50": 2596.88,
+   "p95": 3329.57,
+   "p99": 3609.67,
+   "max": 3687.45
+  },
+  "cpu": {
+   "n": 43,
+   "errors": 0,
+   "throughput_per_s": 1.7916666666666667,
+   "p50": 2769.18,
+   "p95": 3440.11,
+   "p99": 3751.79,
+   "max": 3751.79
+  }
+ },
+ "session_detail": [
+  {
+   "user": 16,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 184.2982,
+   "arrival_ms": 7.574033,
+   "error": ""
+  },
+  {
+   "user": 0,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 217.87109300000003,
+   "arrival_ms": 34.620160999999996,
+   "error": ""
+  },
+  {
+   "user": 37,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 220.187269,
+   "arrival_ms": 61.64152800000001,
+   "error": ""
+  },
+  {
+   "user": 39,
+   "role": "heavy",
+   "replica": "",
+   "startup_ms": 103.13262399999996,
+   "arrival_ms": 256.327294,
+   "error": ""
+  },
+  {
+   "user": 31,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 148.44520699999998,
+   "arrival_ms": 254.12683299999998,
+   "error": ""
+  },
+  {
+   "user": 34,
+   "role": "heavy",
+   "replica": "",
+   "startup_ms": 204.030354,
+   "arrival_ms": 361.230613,
+   "error": ""
+  },
+  {
+   "user": 18,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 226.665914,
+   "arrival_ms": 378.624667,
+   "error": ""
+  },
+  {
+   "user": 3,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 221.49033100000003,
+   "arrival_ms": 403.848354,
+   "error": ""
+  },
+  {
+   "user": 1,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 328.542881,
+   "arrival_ms": 406.380229,
+   "error": ""
+  },
+  {
+   "user": 9,
+   "role": "heavy",
+   "replica": "",
+   "startup_ms": 334.57296400000007,
+   "arrival_ms": 420.62805,
+   "error": ""
+  },
+  {
+   "user": 14,
+   "role": "heavy",
+   "replica": "",
+   "startup_ms": 363.6011279999999,
+   "arrival_ms": 561.686405,
+   "error": ""
+  },
+  {
+   "user": 35,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 398.775902,
+   "arrival_ms": 556.52819,
+   "error": ""
+  },
+  {
+   "user": 17,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 421.4711279999999,
+   "arrival_ms": 603.937039,
+   "error": ""
+  },
+  {
+   "user": 26,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 402.3769760000001,
+   "arrival_ms": 662.8625440000001,
+   "error": ""
+  },
+  {
+   "user": 10,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 2005.5665480000002,
+   "arrival_ms": 779.674806,
+   "error": ""
+  },
+  {
+   "user": 7,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 2017.6633770000003,
+   "arrival_ms": 784.72298,
+   "error": ""
+  },
+  {
+   "user": 32,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 2132.849254,
+   "arrival_ms": 762.5214030000001,
+   "error": ""
+  },
+  {
+   "user": 6,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4017.932167,
+   "arrival_ms": 897.5060530000001,
+   "error": ""
+  },
+  {
+   "user": 38,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4007.504789,
+   "arrival_ms": 947.506616,
+   "error": ""
+  },
+  {
+   "user": 13,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 3975.5739099999996,
+   "arrival_ms": 990.586367,
+   "error": ""
+  },
+  {
+   "user": 19,
+   "role": "heavy",
+   "replica": "",
+   "startup_ms": 4506.411142,
+   "arrival_ms": 1078.946067,
+   "error": ""
+  },
+  {
+   "user": 15,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4459.18639,
+   "arrival_ms": 1156.121701,
+   "error": ""
+  },
+  {
+   "user": 30,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4538.14754,
+   "arrival_ms": 1147.197623,
+   "error": ""
+  },
+  {
+   "user": 21,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4501.70637,
+   "arrival_ms": 1213.587517,
+   "error": ""
+  },
+  {
+   "user": 4,
+   "role": "heavy",
+   "replica": "",
+   "startup_ms": 4535.8059809999995,
+   "arrival_ms": 1219.485732,
+   "error": ""
+  },
+  {
+   "user": 20,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4548.916334,
+   "arrival_ms": 1226.3827390000001,
+   "error": ""
+  },
+  {
+   "user": 2,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4572.321641,
+   "arrival_ms": 1243.133212,
+   "error": ""
+  },
+  {
+   "user": 8,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4559.586446,
+   "arrival_ms": 1283.19639,
+   "error": ""
+  },
+  {
+   "user": 36,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4581.770756,
+   "arrival_ms": 1283.507254,
+   "error": ""
+  },
+  {
+   "user": 29,
+   "role": "heavy",
+   "replica": "",
+   "startup_ms": 4441.000342,
+   "arrival_ms": 1444.2408950000001,
+   "error": ""
+  },
+  {
+   "user": 33,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4349.45574,
+   "arrival_ms": 1565.7648940000001,
+   "error": ""
+  },
+  {
+   "user": 27,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4379.638425,
+   "arrival_ms": 1560.670133,
+   "error": ""
+  },
+  {
+   "user": 23,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4938.478945,
+   "arrival_ms": 1626.880649,
+   "error": ""
+  },
+  {
+   "user": 11,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4978.589688,
+   "arrival_ms": 1626.662577,
+   "error": ""
+  },
+  {
+   "user": 22,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4958.621579,
+   "arrival_ms": 1667.652722,
+   "error": ""
+  },
+  {
+   "user": 5,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4989.315994,
+   "arrival_ms": 1674.679368,
+   "error": ""
+  },
+  {
+   "user": 25,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4918.423314000001,
+   "arrival_ms": 1766.809464,
+   "error": ""
+  },
+  {
+   "user": 12,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4984.20877,
+   "arrival_ms": 1730.707095,
+   "error": ""
+  },
+  {
+   "user": 28,
+   "role": "light",
+   "replica": "",
+   "startup_ms": 4933.459298,
+   "arrival_ms": 1801.876593,
+   "error": ""
+  },
+  {
+   "user": 24,
+   "role": "heavy",
+   "replica": "",
+   "startup_ms": 4999.403378000001,
+   "arrival_ms": 1775.838304,
+   "error": ""
+  }
+ ]
+}

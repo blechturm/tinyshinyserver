@@ -1,0 +1,204 @@
+{
+ "scenario": "B",
+ "users": 20,
+ "session_ops": 0,
+ "duration_s": 32,
+ "warmup_s": 8,
+ "url": "http://tss-server:3838/proxy/demo/",
+ "sessions": 20,
+ "session_errors": 0,
+ "errors": 0,
+ "startup_ms": {
+  "p50": 348.421775,
+  "p95": 1800.5463530000002,
+  "max": 1800.5463530000002
+ },
+ "distribution": {
+  "demo-2": 5,
+  "demo-1": 5,
+  "demo-3": 5,
+  "demo-4": 5
+ },
+ "ops": {
+  "fast": {
+   "n": 679,
+   "errors": 0,
+   "throughput_per_s": 28.291666666666668,
+   "p50": 6.41,
+   "p95": 712.43,
+   "p99": 1332.9,
+   "max": 1870.63
+  },
+  "cpu": {
+   "n": 33,
+   "errors": 0,
+   "throughput_per_s": 1.375,
+   "p50": 1055.88,
+   "p95": 1931.13,
+   "p99": 2163.42,
+   "max": 2163.42
+  }
+ },
+ "session_detail": [
+  {
+   "user": 8,
+   "role": "light",
+   "replica": "demo-2",
+   "startup_ms": 273.323369,
+   "arrival_ms": 58.66036199999999,
+   "error": ""
+  },
+  {
+   "user": 6,
+   "role": "light",
+   "replica": "demo-1",
+   "startup_ms": 291.558909,
+   "arrival_ms": 40.755472,
+   "error": ""
+  },
+  {
+   "user": 17,
+   "role": "light",
+   "replica": "demo-3",
+   "startup_ms": 319.452422,
+   "arrival_ms": 91.671764,
+   "error": ""
+  },
+  {
+   "user": 0,
+   "role": "light",
+   "replica": "demo-4",
+   "startup_ms": 370.997842,
+   "arrival_ms": 40.24736899999999,
+   "error": ""
+  },
+  {
+   "user": 3,
+   "role": "light",
+   "replica": "demo-4",
+   "startup_ms": 316.251989,
+   "arrival_ms": 232.67862399999999,
+   "error": ""
+  },
+  {
+   "user": 12,
+   "role": "light",
+   "replica": "demo-3",
+   "startup_ms": 622.7666869999999,
+   "arrival_ms": 14.614610000000003,
+   "error": ""
+  },
+  {
+   "user": 15,
+   "role": "light",
+   "replica": "demo-1",
+   "startup_ms": 276.515535,
+   "arrival_ms": 399.62740399999996,
+   "error": ""
+  },
+  {
+   "user": 14,
+   "role": "heavy",
+   "replica": "demo-2",
+   "startup_ms": 251.71822399999996,
+   "arrival_ms": 515.073361,
+   "error": ""
+  },
+  {
+   "user": 19,
+   "role": "heavy",
+   "replica": "demo-4",
+   "startup_ms": 224.16211599999997,
+   "arrival_ms": 701.5816629999999,
+   "error": ""
+  },
+  {
+   "user": 7,
+   "role": "light",
+   "replica": "demo-3",
+   "startup_ms": 282.815386,
+   "arrival_ms": 662.271093,
+   "error": ""
+  },
+  {
+   "user": 2,
+   "role": "light",
+   "replica": "demo-2",
+   "startup_ms": 334.63740799999994,
+   "arrival_ms": 779.966373,
+   "error": ""
+  },
+  {
+   "user": 11,
+   "role": "light",
+   "replica": "demo-1",
+   "startup_ms": 348.421775,
+   "arrival_ms": 766.270048,
+   "error": ""
+  },
+  {
+   "user": 1,
+   "role": "light",
+   "replica": "demo-3",
+   "startup_ms": 372.9998640000001,
+   "arrival_ms": 925.803357,
+   "error": ""
+  },
+  {
+   "user": 10,
+   "role": "light",
+   "replica": "demo-1",
+   "startup_ms": 404.92566899999997,
+   "arrival_ms": 1123.2162739999999,
+   "error": ""
+  },
+  {
+   "user": 13,
+   "role": "light",
+   "replica": "demo-3",
+   "startup_ms": 369.448701,
+   "arrival_ms": 1178.563285,
+   "error": ""
+  },
+  {
+   "user": 4,
+   "role": "heavy",
+   "replica": "demo-2",
+   "startup_ms": 392.5580090000001,
+   "arrival_ms": 1155.601738,
+   "error": ""
+  },
+  {
+   "user": 5,
+   "role": "light",
+   "replica": "demo-1",
+   "startup_ms": 235.10154599999987,
+   "arrival_ms": 1500.688419,
+   "error": ""
+  },
+  {
+   "user": 18,
+   "role": "light",
+   "replica": "demo-4",
+   "startup_ms": 1800.5463530000002,
+   "arrival_ms": 1034.941639,
+   "error": ""
+  },
+  {
+   "user": 9,
+   "role": "heavy",
+   "replica": "demo-4",
+   "startup_ms": 1691.9267710000001,
+   "arrival_ms": 1221.685235,
+   "error": ""
+  },
+  {
+   "user": 16,
+   "role": "light",
+   "replica": "demo-2",
+   "startup_ms": 1397.4993729999999,
+   "arrival_ms": 1817.5606149999999,
+   "error": ""
+  }
+ ]
+}

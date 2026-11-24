@@ -1,0 +1,85 @@
+{
+ "scenario": "B",
+ "users": 5,
+ "session_ops": 0,
+ "duration_s": 32,
+ "warmup_s": 8,
+ "url": "http://tss-server:3838/proxy/demo/",
+ "sessions": 5,
+ "session_errors": 0,
+ "errors": 0,
+ "startup_ms": {
+  "p50": 134.90018800000007,
+  "p95": 183.48280499999998,
+  "max": 183.48280499999998
+ },
+ "distribution": {
+  "demo-7": 1,
+  "demo-8": 1,
+  "demo-1": 1,
+  "demo-2": 1,
+  "demo-3": 1
+ },
+ "ops": {
+  "fast": {
+   "n": 201,
+   "errors": 0,
+   "throughput_per_s": 8.375,
+   "p50": 6.15,
+   "p95": 50.42,
+   "p99": 54.98,
+   "max": 59.93
+  },
+  "cpu": {
+   "n": 4,
+   "errors": 0,
+   "throughput_per_s": 0.16666666666666666,
+   "p50": 512.7,
+   "p95": 549.23,
+   "p99": 549.23,
+   "max": 549.23
+  }
+ },
+ "session_detail": [
+  {
+   "user": 0,
+   "role": "light",
+   "replica": "demo-7",
+   "startup_ms": 183.48280499999998,
+   "arrival_ms": 3.4626589999999986,
+   "error": ""
+  },
+  {
+   "user": 4,
+   "role": "heavy",
+   "replica": "demo-8",
+   "startup_ms": 150.15305999999998,
+   "arrival_ms": 268.18978100000004,
+   "error": ""
+  },
+  {
+   "user": 1,
+   "role": "light",
+   "replica": "demo-1",
+   "startup_ms": 121.44964100000004,
+   "arrival_ms": 786.192738,
+   "error": ""
+  },
+  {
+   "user": 3,
+   "role": "light",
+   "replica": "demo-2",
+   "startup_ms": 134.90018800000007,
+   "arrival_ms": 1122.955641,
+   "error": ""
+  },
+  {
+   "user": 2,
+   "role": "light",
+   "replica": "demo-3",
+   "startup_ms": 132.69158199999993,
+   "arrival_ms": 1893.989477,
+   "error": ""
+  }
+ ]
+}

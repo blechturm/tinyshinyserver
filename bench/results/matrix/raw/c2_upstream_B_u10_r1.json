@@ -1,0 +1,121 @@
+{
+ "scenario": "B",
+ "users": 10,
+ "session_ops": 0,
+ "duration_s": 32,
+ "warmup_s": 8,
+ "url": "http://tss-server:3838/proxy/demo/",
+ "sessions": 10,
+ "session_errors": 0,
+ "errors": 0,
+ "startup_ms": {
+  "p50": 97.69895900000006,
+  "p95": 436.2319020000002,
+  "max": 436.2319020000002
+ },
+ "distribution": {
+  "demo": 10
+ },
+ "ops": {
+  "fast": {
+   "n": 312,
+   "errors": 0,
+   "throughput_per_s": 13,
+   "p50": 6.55,
+   "p95": 528.45,
+   "p99": 855.16,
+   "max": 945.18
+  },
+  "cpu": {
+   "n": 22,
+   "errors": 0,
+   "throughput_per_s": 0.9166666666666666,
+   "p50": 512.77,
+   "p95": 928.56,
+   "p99": 971.23,
+   "max": 971.23
+  }
+ },
+ "session_detail": [
+  {
+   "user": 0,
+   "role": "light",
+   "replica": "demo",
+   "startup_ms": 110.68514100000002,
+   "arrival_ms": 13.489641000000002,
+   "error": ""
+  },
+  {
+   "user": 7,
+   "role": "light",
+   "replica": "demo",
+   "startup_ms": 106.61408499999999,
+   "arrival_ms": 37.542243,
+   "error": ""
+  },
+  {
+   "user": 3,
+   "role": "light",
+   "replica": "demo",
+   "startup_ms": 88.61211400000002,
+   "arrival_ms": 276.565338,
+   "error": ""
+  },
+  {
+   "user": 5,
+   "role": "light",
+   "replica": "demo",
+   "startup_ms": 73.54315700000006,
+   "arrival_ms": 591.365446,
+   "error": ""
+  },
+  {
+   "user": 8,
+   "role": "light",
+   "replica": "demo",
+   "startup_ms": 77.72821799999997,
+   "arrival_ms": 656.848371,
+   "error": ""
+  },
+  {
+   "user": 2,
+   "role": "light",
+   "replica": "demo",
+   "startup_ms": 97.69895900000006,
+   "arrival_ms": 957.404618,
+   "error": ""
+  },
+  {
+   "user": 4,
+   "role": "heavy",
+   "replica": "demo",
+   "startup_ms": 94.17544800000019,
+   "arrival_ms": 1119.9017130000002,
+   "error": ""
+  },
+  {
+   "user": 6,
+   "role": "light",
+   "replica": "demo",
+   "startup_ms": 100.92498099999989,
+   "arrival_ms": 1133.0306070000001,
+   "error": ""
+  },
+  {
+   "user": 1,
+   "role": "light",
+   "replica": "demo",
+   "startup_ms": 83.01273300000003,
+   "arrival_ms": 1461.7542560000002,
+   "error": ""
+  },
+  {
+   "user": 9,
+   "role": "heavy",
+   "replica": "demo",
+   "startup_ms": 436.2319020000002,
+   "arrival_ms": 1968.142507,
+   "error": ""
+  }
+ ]
+}
