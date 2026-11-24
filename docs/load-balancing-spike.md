@@ -275,9 +275,50 @@ under limitations.
   not a user-visible bug, and the failure scenario's numbers for the
   victim's own sessions use the server's log rather than the client.
 
+## Planned follow-up: shared data with mori (conditional)
+
+Decided 2026-11-24: if scenario B shows that replicas help, run a bounded
+mori experiment next, although the original brief excluded shared memory.
+Each replica is a full R process with its own copy of everything the app
+loads (about 145 MB for the benchmark app, plus any dataset per replica),
+so memory, not CPU, may limit how many replicas a small machine can run.
+mori could let replicas map one shared copy of a dataset instead.
+
+Planned scope:
+
+- Give the benchmark app a large dataset (a few hundred MB).
+- Measure memory and startup time for 1, 2, 4 and 8 replicas, with and
+  without sharing the dataset through mori.
+- Read mori's API and source, as was done for mizu: which process should
+  own the shared region when replicas restart independently, what happens
+  to replicas when the owner dies, and whether apps must change how they
+  load data.
+
+If scenario B shows no benefit from replicas, this experiment is not run.
+
 ## Effort for a production-quality contribution
 
-<!-- EFFORT -->
+The core change is small because it reuses everything; most of the work
+would be in the edges that upstream's standard of care demands (its NEWS
+for 0.3.0 shows how thoroughly each behaviour is specified, documented and
+tested). Rough estimates for one developer familiar with the code base:
+
+| Work | Estimate |
+|---|---|
+| Agree the configuration API with the maintainer (`replicas` on an app vs. a group entry; scheduler names; whether `least_connections` is the only one) | discussion |
+| Harden routing: failover of a replica's own address to the group when the replica is down (redirect back to the logical address instead of the starting page); answer the removed replicas' addresses after a reload | 2–3 days |
+| On-demand groups: cancel the idle check of the chosen replica on redirect; decide whether a cold replica should ever be preferred to a warm one | 1–2 days |
+| Make pending-assignment accounting robust (count only page loads that can open a session; configurable window) | 1 day |
+| Management dashboard: show groups with their replicas; a "restart group" action (rolling restart) | 2–3 days |
+| Clear error for Quarto/prerendered documents with replicas; README and `help("config-format")`; NEWS | 1–2 days |
+| Tests to upstream's level (reload with changed replica counts, base_path, Windows and macOS, browser tests in `tests/browser/`) | 3–4 days |
+| **Total, without telemetry** | **about 2–3 weeks** |
+
+The mizu telemetry is not part of this estimate. Its cost is mostly
+outside tinyshinyserver: it needs a supported mizu API for a peer that
+mizu does not spawn and for non-blocking channel creation (see the mizu
+evaluation), and a decision on whether its measured benefit justifies a
+second inter-process mechanism next to HTTP and WebSockets.
 
 ## mizu evaluation
 
