@@ -8,7 +8,36 @@ helps. A second part evaluates [mizu](https://github.com/shikokuchuo/mizu)
 shared-memory channels as an optional control plane between the server and
 those processes.
 
-<!-- RESULTS-SUMMARY -->
+## Summary
+
+- **It fits the architecture.** A `replicas: N` setting on an app starts N
+  ordinary app processes; the app's address redirects each new visitor to
+  one of them (least connections or round robin), and the replica's own
+  address keeps every later request, WebSocket, upload and download of
+  that session on its process. Supervision, restarts and shutdown are
+  upstream's, unchanged. About 280 lines of R plus tests; no new
+  dependencies; configurations without `replicas` behave as before
+  (upstream's 3503 tests pass unmodified).
+- **It helps whenever one process makes users wait for each other**
+  (section 5). With 8 replicas on a single vCPU, the share of light
+  interactions slower than 250 ms falls from 56% to 3% when a fifth of 20
+  users run 0.5 s computations, and from 92% to 4% when they wait on
+  blocking I/O; blocking calls completed per second rise from 1.7 to 8.1 at
+  80 users. On 2 vCPUs, replicas use the second core: 1.8× the throughput
+  of CPU-bound work, which one R process cannot do.
+- **It cannot create CPU.** When every user computes (scenario D), 1 vCPU
+  completes the same work with or without replicas, and on 1 vCPU the heavy
+  computations themselves get 10–30% slower while light users get their
+  answers.
+- **Costs**: about 110–150 MB of memory per replica (an R process with
+  shiny), and slower session start-up under extreme CPU starvation (1 vCPU,
+  80 users, 8 replicas: p95 34 s against 9 s), caused by the fixed 5 s
+  handshake timeout of the `websocket` package used by the existing relay.
+- **mizu** (shared-memory channels) works as an optional per-replica
+  telemetry channel for a workload-aware scheduler, but only through
+  internal functions; see the mizu evaluation.
+- Estimated effort to a mergeable contribution: about 3 weeks, mostly
+  failover, on-demand edge cases, dashboard and tests.
 
 ## 1. Upstream architecture, as far as it matters here
 
@@ -220,7 +249,258 @@ logical address was scheduled twice (once from its headers), skewing the
 rotation and leaving a phantom pending entry. Its further points are listed
 under limitations.
 
-<!-- RESULTS -->
+## 4. Benchmark method
+
+**Machine.** One Windows 11 workstation (Intel i9-12900K, 8 performance
+and 8 efficiency cores, 64 GB), Docker 29.6 in WSL2 (Linux 5.15, cgroup
+v1). The image (`bench/docker/Dockerfile`) is R 4.6.1 with shiny 1.14.0,
+httpuv 1.6.17, websocket 1.4.4 and later 1.4.8, BLAS and OpenMP limited to
+one thread. It contains three servers built from git: unmodified upstream
+`0f0a76d`, the spike, and plain `shiny::runApp()` ("direct", no proxy).
+
+**Isolation.** The server container is pinned with `--cpuset-cpus` to 1 or
+2 vCPUs; that confines the proxy and every app process. The load generator
+runs in its own container on four other vCPUs. WSL2 vCPUs are scheduled by
+Windows onto physical cores, so "1 vCPU" here is closer to a cloud vCPU
+than to a dedicated core. To detect drift, every run first times a fixed
+CPU loop in the server container (`docker/calibrate.R`): 8,511–9,132
+iterations per ms over all 336 runs (±3.5%), stored with each run.
+Configurations and runs within a configuration are shuffled.
+
+**Load.** `bench/loadgen.mjs` is a Shiny client at protocol level (no
+browser): each virtual user loads the page through the logical address,
+follows the redirect, opens the WebSocket, sends Shiny's init message,
+then sends input changes and waits for the output that answers each one.
+Every answer names its process and session, so latency is measured per
+operation and placement is known. Think times are exponential (light
+users: mean 0.5 s). Users arrive over 2 s; a run lasts 32 s; operations
+count from the end of the 8 s warm-up or 2 s after the last session opened,
+whichever is later. Two or three repetitions per cell; the tables show the
+quantiles of all repetitions pooled.
+
+**Scenarios** (benchmark app `bench/app/app.R`):
+
+| | Users | What the others do |
+|---|---|---|
+| A | 80% light (cheap reactive), 20% stateful (session counter) | — |
+| B | 80% light | 20% heavy: 0.5 s of CPU, mean 2 s think time |
+| C | 80% light | 20% blocking I/O: `Sys.sleep(0.5)`, mean 1 s think time |
+| D | all saturate: 0.25 s of CPU, mean 0.25 s think time | — |
+
+Configurations: direct Shiny, unmodified upstream, the spike with one
+process ("spike, 1"), and the spike with 2, 4 or 8 replicas (r2, r4, r8,
+least connections). 336 runs: B with every configuration at 5, 10, 20, 40
+and 80 users (3 repetitions); A, C and D at 5, 20 and 80 users (2
+repetitions; A without r2, C and D without direct and spike, 1, which
+equalled upstream in B). The 4 vCPU phase and replica counts beyond 8 were not run.
+
+**Metrics.** Per operation: p50/p95/p99, the share over 100 and 250 ms,
+throughput. Per run: per-process CPU (from `/proc`, before, during and
+after), RSS, the container's cgroup memory, session start-up time, the
+distribution of sessions over replicas. Everything is in
+`bench/results/analysis/` (`runs.csv` per run, `ops_summary.csv` and
+`runs_summary.csv` per cell, plots in `plots/`), computed by
+`bench/analyze.R` from the raw files in `bench/results/matrix/raw/`.
+`bench/run-all.sh` reproduces the matrix.
+
+## 5. Results
+
+### No overhead from the change itself
+
+With one process, the spike is indistinguishable from upstream in every
+scenario (B, 1 vCPU, 20 users: light p95 1.0 s vs. 1.3 s, CPU jobs 755 vs.
+855 ms; differences of this size go either way between cells). Upstream's
+proxy costs about 2.5 ms of CPU per relayed operation and adds 2–8 ms of
+median latency compared with direct Shiny; that is the existing proxy, and
+replicas do not change it.
+
+### Scenario B: heavy computations block other users (H1, H2)
+
+Share of light operations (one cheap reactive calculation) slower than
+250 ms:
+
+| Users | 1 vCPU: upstream | r2 | r4 | r8 | 2 vCPUs: upstream | r2 | r4 | r8 |
+|---|---|---|---|---|---|---|---|---|
+| 5 | 9% | 3% | 1% | 0% | 11% | 4% | 1% | 0% |
+| 10 | 23% | 10% | 5% | 1% | 18% | 9% | 3% | 1% |
+| 20 | 56% | 28% | 11% | 3% | 44% | 15% | 9% | 3% |
+| 40 | 99% | 84% | 32% | 10% | 95% | 54% | 25% | 12% |
+| 80 | 100% | 100% | 93% | 25% | 100% | 99% | 80% | 26% |
+
+Median and p95 of light operations, ms:
+
+| Users | 1 vCPU: upstream | r8 | 2 vCPUs: upstream | r2 | r8 |
+|---|---|---|---|---|---|
+| 10 | 13 / 558 | 7 / 54 | 6 / 475 | 7 / 407 | 6 / 53 |
+| 20 | 352 / 1,300 | 7 / 58 | 149 / 876 | 12 / 458 | 7 / 61 |
+| 40 | 2,600 / 3,600 | 7 / 2,600 | 2,000 / 2,800 | 329 / 1,300 | 8 / 746 |
+| 80 | 7,500 / 8,900 | 50 / 8,800 | 6,300 / 7,700 | 2,300 / 3,800 | 12 / 3,100 |
+
+In one process, a light operation waits for every heavy computation queued
+before it. In separate processes, the operating system's scheduler
+interleaves them, so the light operation gets a time slice within
+milliseconds even on one vCPU. The p95 of r8 at 40 and 80 users is set by
+the users who share a replica with a heavy user (with 8 replicas and 8–16
+heavy users, two to four land on the busiest replica).
+
+The heavy computations themselves (median, jobs per second):
+
+| Users | 1 vCPU: upstream | r8 | 2 vCPUs: upstream | r2 | r8 |
+|---|---|---|---|---|---|
+| 20 | 855 ms, 1.33 | 1.1 s, 1.12 | 578 ms, 1.25 | 526 ms, 1.38 | 549 ms, 1.46 |
+| 40 | 2.9 s, 1.64 | 3.2 s, 1.34 | 2.4 s, 1.96 | 885 ms, 2.83 | 901 ms, 2.46 |
+| 80 | 7.6 s, 1.67 | 8.6 s, 1.38 | 6.5 s, 1.80 | 2.8 s, 3.37 | 3.0 s, 2.71 |
+
+On 1 vCPU, the CPU is shared rather than created: light users get their
+answers, and heavy users pay for it: with r8, computations take 10–30%
+longer and about 17% fewer complete at 20–80 users. On 2 vCPUs, one process can use
+only one core (0.99 cores at saturation), while r2 uses 1.75 and completes
+44–87% more jobs in less than half the time.
+
+Plots: `B_fast_over250_vs_users.png`, `B_fast_p95_vs_users.png`,
+`B_cpu_p50_vs_users.png`, `B_throughput_vs_users.png`,
+`vcpu_comparison.png`.
+
+### Scenario C: blocking I/O (H3)
+
+20% of users call `Sys.sleep(0.5)`, which stands for a slow database or
+web API called synchronously.
+
+| Users | | upstream | r2 | r4 | r8 |
+|---|---|---|---|---|---|
+| 20 | light, median / p95 (1 vCPU) | 958 / 1,590 ms | 19 / 937 | 11 / 452 | 8 / 153 |
+| 20 | blocking calls per second (1 vCPU) | 1.7 | 2.2 | 2.4 | 2.5 |
+| 80 | light, median / p95 (1 vCPU) | 7.7 / 8.5 s | 3.3 / 4.3 s | 957 / 2,011 ms | 122 / 972 ms |
+| 80 | light, median / p95 (2 vCPUs) | 7.2 / 7.8 s | 2.9 / 3.9 s | 582 / 1,811 ms | 31 / 855 ms |
+| 80 | blocking calls per second (1 vCPU) | 1.7 | 3.5 | 6.3 | 8.1 |
+| 80 | all operations per second (1 vCPU) | 9.7 | 21 | 49 | 88 |
+
+One process can wait for only one call at a time, so upstream completes at
+most two blocking calls per second however many users wait; replicas wait
+in parallel. The CPU is mostly idle (0.3–0.9 cores), so 1 and 2 vCPUs give
+nearly the same result. This is the largest effect measured. With 16
+blocking users on 8 replicas, r8 at 80 users still leaves 37% of light
+operations over 250 ms: more replicas, or asynchronous calls inside the
+app, would be needed there.
+
+Plots: `C_fast_p95_vs_users.png`, `C_io_throughput_vs_users.png`.
+
+### Scenario D: CPU saturation, where replicas cannot help
+
+Every user runs 0.25 s computations with short pauses; the demand is 2.5 to
+40 cores.
+
+| | 1 vCPU: upstream | r2 | r4 | r8 | 2 vCPUs: upstream | r2 | r4 | r8 |
+|---|---|---|---|---|---|---|---|---|
+| 5 users: jobs/s | 3.71 | 3.54 | 3.52 | 3.54 | 3.90 | 6.85 | 6.94 | 6.81 |
+| 5 users: median | 1.1 s | 1.1 s | 1.0 s | 1.2 s | 1.0 s | 471 ms | 450 ms | 482 ms |
+| 20 users: jobs/s | 3.71 | 3.66 | 3.66 | 3.63 | 4.08 | 7.27 | 7.10 | 6.88 |
+| 20 users: median | 5.3 s | 5.4 s | 5.4 s | 4.8 s | 4.8 s | 2.5 s | 2.6 s | 2.5 s |
+
+On 1 vCPU every configuration completes the same 3.6–3.7 jobs per second
+(the CPU's capacity) with the same latency: replicas redistribute waiting,
+they do not remove it. On 2 vCPUs, replicas use the second core: 1.75–1.8×
+the throughput at half the latency, already with two replicas; four and
+eight add nothing and r8 has a longer tail (p95 3.5 s vs. 2.7 s at 20
+users). At 80 users, session start-up took longer than the run, so the
+throughput of that cell is not reliable and is left out here (it is in the
+CSV, marked `late_sessions`).
+
+Plot: `D_cpu_throughput_vs_users.png`.
+
+### Scenario A: light load
+
+On 2 vCPUs, direct Shiny, upstream, the spike and r4/r8 are within a few
+milliseconds of each other at 5, 20 and 80 users (80 users: p95 50–64 ms,
+120 operations/s). On 1 vCPU, 80 users saturate the vCPU:
+
+| 1 vCPU, 80 users | direct | upstream | spike, 1 | r4 | r8 |
+|---|---|---|---|---|---|
+| Operations/s | 136 | 98 | 97 | 109 | 128 |
+| Light, median / p95 | 60 / 150 ms | 301 / 392 ms | 301 / 446 ms | 197 / 416 ms | 84 / 244 ms |
+| CPU, proxy / app processes (cores) | – / 0.88 | 0.23 / 0.69 | 0.23 / 0.71 | 0.30 / 0.58 | 0.32 / 0.57 |
+
+Here the proxy's CPU becomes visible: upstream completes 28% fewer
+operations than direct Shiny. Unexpectedly, r8 recovers most of it: its
+app processes need 4.4 ms of CPU per operation against 7.1 ms for one
+process holding all 80 sessions (similar at 20 users: 5.5 vs. 8.1 ms).
+**Hypothesis, not tested:** Shiny's work per operation grows with the
+number of sessions in the process (each flush cycle visits every session),
+so splitting sessions makes each operation cheaper. A profile of one
+process at 10 and 80 sessions would settle it.
+
+### Memory (H4)
+
+| | upstream | r2 | r4 | r8 |
+|---|---|---|---|---|
+| Idle, whole container (cgroup) | 240 MB | 349 MB | 570 MB | 1,010–1,150 MB |
+| B, 20 users, cgroup RSS | 330–360 MB | 500–540 MB | 810–820 MB | 1,330–1,360 MB |
+
+Each replica of the benchmark app costs about 110–130 MB idle and 140–150 MB
+under load: an R process with shiny loaded. An app holding data in memory
+adds its data per replica; the shared-data follow-up measures how much of
+that can be saved.
+
+### Session start-up under starvation: a negative result (H4)
+
+p95 / maximum time from requesting the page to the first message on the
+WebSocket, scenario B:
+
+| | upstream | r2 | r4 | r8 |
+|---|---|---|---|---|
+| 1 vCPU, 40 users | 4.4 / 4.4 s | 5.9 / 6.0 s | 7.3 / 7.5 s | 5.1 / 7.5 s |
+| 1 vCPU, 80 users | 8.7 / 9.5 s | 10.6 / 10.7 s | 16.3 / 36.4 s | 34.4 / 34.6 s |
+| 2 vCPUs, 80 users | 10.4 / 10.7 s | 4.9 / 5.1 s | 5.3 / 5.5 s | 6.8 / 12.3 s |
+
+On 2 vCPUs replicas start sessions faster, but on 1 vCPU with 80 users
+start-up with r4 and r8 is up to four times slower than upstream. The
+cause is upstream's existing WebSocket relay: the proxy opens its backend
+WebSocket with the `websocket` package, whose handshake timeout is fixed at
+5 s. When 8 CPU-starved replicas cannot answer a handshake within 5 s, the
+proxy gives up and the client retries; one reproduced run retried 20
+times. With fewer processes competing for the vCPU, handshakes are
+answered sooner. This cannot be fixed inside
+tinyshinyserver without a change to `websocket` (a configurable timeout)
+or to the relay; until then, fewer replicas per vCPU under heavy CPU load
+avoid it. In scenario A at 80 users on 1 vCPU the same effect is milder
+(p95 6.1 s upstream, 7.5 s r8).
+
+### Fault isolation (H5)
+
+The protocol and browser checks (section 3) kill one replica with SIGKILL
+while sessions on every replica are active: the sessions on other replicas
+continue without error, the victim's pages show Shiny's disconnected
+overlay within about 40 ms, no new visitor is sent to the dead replica, and
+it rejoins the rotation after `restart_delay`. This was verified as a
+check, not measured under load at scale.
+
+### Hypotheses
+
+| | Verdict | Evidence |
+|---|---|---|
+| H1: several processes on one vCPU reduce tail latency of light interactions under heterogeneous load | **Confirmed** | B and C on 1 vCPU: light operations over 250 ms fall from 56% to 3% (B, 20 users) and from 92% to 4% (C, 20 users) with 8 replicas. The cost: heavy computations 10–25% slower (B). |
+| H2: several processes on several vCPUs raise CPU-bound throughput | **Confirmed** | D on 2 vCPUs: 1.75–1.8× jobs per second; B on 2 vCPUs: 44–87% more heavy jobs at 40–80 users. Needs only as many replicas as vCPUs. |
+| H3: several processes raise throughput of synchronous blocking I/O, also on one vCPU | **Confirmed, strongest effect** | C: blocking calls per second 1.7 → 8.1, all operations 9.7 → 88 per second (1 vCPU, 80 users, r8). |
+| H4: the best replica count can exceed the vCPU count for heterogeneous or I/O-heavy load; too many replicas hurt | **Confirmed, with limits** | B and C improve up to 8 replicas on 1 vCPU. Harm appears as memory (≈140 MB per replica), as session start-ups up to 4× slower under CPU starvation (handshake timeout), and as a longer tail in D. No throughput loss beyond the CPU's capacity was measured. |
+| H5: a failed process does not disrupt sessions on other replicas | **Confirmed by checks** | Section 3; not measured as a benchmark scenario. |
+
+### Limitations of the measurements
+
+- One workstation, WSL2 vCPUs on a hybrid CPU; absolute numbers will differ
+  on cloud vCPUs, ratios should be similar. No 4 vCPU runs.
+- A synthetic app whose operations are pure CPU loops or `Sys.sleep()`;
+  real apps mix both and allocate memory.
+- A protocol-level client, not browsers; it does not load static assets
+  after the first page, so browser start-up is somewhat heavier.
+- Two or three repetitions per cell; the bars in the plots show the range.
+  Cells where sessions were still opening near the end are marked
+  `late_sessions` and their throughput excluded from conclusions.
+- Session churn was not part of the matrix: every user keeps one session
+  for the whole run, so placement is decided once (least connections with
+  pending assignments distributes evenly: the busiest of 8 replicas held
+  12.5–20% of sessions).
+
+<!-- FOLLOWUP-RESULTS -->
 
 ## Known limitations and open problems
 
@@ -249,6 +529,13 @@ under limitations.
   entries drift: a monitor or link preview that GETs the logical address
   adds one for 30 s, and any WebSocket opening on a replica (a reload at
   its own address, a reconnect) consumes one.
+
+- **Slow session start-up when replicas are starved of CPU.** The
+  existing WebSocket relay opens its backend connection with the
+  `websocket` package, whose handshake timeout is fixed at 5 s and cannot
+  be set from R. Replicas that cannot answer within 5 s make the proxy
+  give up and the browser retry (section 5). Fixing it needs a timeout
+  option in `websocket` or a different relay.
 
 **Of the implementation**
 
@@ -369,8 +656,9 @@ tested). Rough estimates for one developer familiar with the code base:
 | Make pending-assignment accounting robust (count only page loads that can open a session; configurable window) | 1 day |
 | Management dashboard: show groups with their replicas; a "restart group" action (rolling restart) | 2–3 days |
 | Clear error for Quarto/prerendered documents with replicas; README and `help("config-format")`; NEWS | 1–2 days |
+| Session start-up under CPU starvation: propose a handshake-timeout option to `websocket`, or document a replicas-per-vCPU guideline | 1–2 days, plus upstream's time |
 | Tests to upstream's level (reload with changed replica counts, base_path, Windows and macOS, browser tests in `tests/browser/`) | 3–4 days |
-| **Total, without telemetry** | **about 2–3 weeks** |
+| **Total, without telemetry** | **11–17 working days, about 3 weeks** |
 
 The mizu telemetry is not part of this estimate. Its cost is mostly
 outside tinyshinyserver: it needs a supported mizu API for a peer that
