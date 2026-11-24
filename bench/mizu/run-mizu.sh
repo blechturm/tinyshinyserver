@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # The mizu experiments, in the tss-bench-mizu image:
 #   1. transport microbenchmark on 1 and 2 vCPUs
-#   2. control plane: 4 replicas with least_connections, with least_connections
-#      and mizu telemetry, and with workload_aware and mizu telemetry, against
-#      upstream, under session churn
+#   2. control plane, under session churn (each user leaves after 5
+#      operations and a new one arrives): 4 replicas with round_robin, with
+#      least_connections, with least_connections and mizu telemetry, and with
+#      workload_aware and mizu telemetry, against upstream
 #   3. idle consumption of 8 replicas with and without telemetry
 #   4. worker death: detection and recovery with and without telemetry
 #   bench/mizu/run-mizu.sh OUTDIR
@@ -25,11 +26,12 @@ done; done
 echo "=== control plane $(date -Is)"
 export LOADGEN_ARGS="--session-ops 5"
 for cpus in 1 2; do
-  jobs=(plain mizu aware upstream)
+  jobs=(plain rr mizu aware upstream)
   mapfile -t jobs < <(printf '%s\n' "${jobs[@]}" | shuf)
   for job in "${jobs[@]}"; do
     case $job in
       plain)    "$here/run-config.sh" "$cpus" replicas 4 "B C" "20 80" 3 "$out/control-r4-lc" ;;
+      rr)       SCHEDULER=round_robin "$here/run-config.sh" "$cpus" replicas 4 "B C" "20 80" 3 "$out/control-r4-rr" ;;
       mizu)     EXTRA_ENV="-e TSS_REPLICA_TELEMETRY=mizu" "$here/run-config.sh" "$cpus" replicas 4 "B C" "20 80" 3 "$out/control-r4-lc-mizu" ;;
       aware)    EXTRA_ENV="-e TSS_REPLICA_TELEMETRY=mizu" SCHEDULER=workload_aware "$here/run-config.sh" "$cpus" replicas 4 "B C" "20 80" 3 "$out/control-r4-wa-mizu" ;;
       upstream) "$here/run-config.sh" "$cpus" upstream 1 "B C" "20 80" 3 "$out/control-upstream" ;;
@@ -39,6 +41,7 @@ done
 unset LOADGEN_ARGS
 
 echo "=== idle $(date -Is)"
+export IDLE_SECONDS=60
 for cpus in 1 2; do
   "$here/run-config.sh" "$cpus" replicas 8 "A" "5" 1 "$out/idle-r8"
   EXTRA_ENV="-e TSS_REPLICA_TELEMETRY=mizu" "$here/run-config.sh" "$cpus" replicas 8 "A" "5" 1 "$out/idle-r8-mizu"

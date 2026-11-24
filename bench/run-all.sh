@@ -23,14 +23,14 @@ for phase in $phases; do
   case $phase in
     # Head-of-line blocking (B) on 1 and 2 vCPUs, all user counts, all baselines
     1) run_phase "1 2" "B" "5 10 20 40 80" 3 "${configs_all[@]}" ;;
-    # Overhead (A), blocking I/O (C), saturation (D) on 1 and 2 vCPUs
-    2) run_phase "1 2" "A C D" "5 20 80" 2 "${configs_all[@]}" ;;
+    # Overhead (A) with Shiny's own server as a baseline; blocking I/O (C)
+    # and saturation (D) on the servers only; 1 and 2 vCPUs
+    2) run_phase "1 2" "A" "5 20 80" 2 "${configs_all[@]}"
+       run_phase "1 2" "C D" "5 20 80" 2 "${configs_tss[@]}" ;;
     # 4 vCPUs: heterogeneous and saturating CPU load
     3) run_phase "4" "B D" "10 40 80" 2 "${configs_tss[@]}" ;;
-    # Scheduler comparison: round robin against least connections
-    4) for sched in round_robin least_connections; do
-         SCHEDULER=$sched "$here/run-config.sh" 1 replicas 4 "B C" "20 80" 3 "$out-sched"
-       done ;;
+    # The scheduler comparison needs session churn; see mizu/run-mizu.sh
+    4) ;;
   esac
 done
 echo "=== done $(date -Is)"

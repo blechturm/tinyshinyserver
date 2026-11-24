@@ -1,7 +1,9 @@
 # Transport microbenchmark: round trips between two R processes on one
 # machine, over
-#   mizu        a mizu channel, blocking receive (spin, then park)
-#   mizu_async  a mizu channel, received through later as an event loop would
+#   mizu        a mizu channel, blocking receive at both ends (spin, then
+#               park): mizu's best case, which an event loop cannot use
+#   mizu_async  a mizu channel, received through later at both ends, as the
+#               server and a replica receive it
 #   websocket   a local WebSocket (websocket client -> httpuv server), the hop
 #               that tinyshinyserver's proxy makes to an app for every message
 #   http        a local HTTP request (curl -> httpuv), the hop for every request
@@ -45,7 +47,16 @@ for (size in sizes) {
   record("mizu", size, t)
 }
 
-# mizu, received on the event loop
+# mizu, received on the event loop at both ends, as a server and a replica
+# would use it: the echo peer, too, waits for events instead of spinning
+mizu_close(ch)
+ch <- mizu_channel(quote({
+  open <- TRUE
+  mizu_recv_handler(ch, function(x) {
+    if (inherits(x, "condition")) open <<- FALSE else mizu_send(ch, x)
+  })
+  while (open) later::run_now(1)
+}), arena_size = 64 * 1024^2)
 for (size in sizes) {
   x <- payload(size)
   t <- numeric(iterations(size))
@@ -90,6 +101,7 @@ while (!opened) run_now(0.1)
 for (size in sizes) {
   x <- payload(size)
   t <- numeric(iterations(size))
+  for (i in 1:5) { received <- FALSE; ws$send(x); while (!received) run_now(1) }
   for (i in seq_along(t)) {
     received <- FALSE
     start <- clock()
@@ -104,6 +116,10 @@ ws$close()
 handle <- curl::new_handle()
 for (size in sizes) {
   x <- charToRaw(payload(size))
+  for (i in 1:5) {
+    curl::handle_setopt(handle, post = TRUE, postfields = x)
+    curl::curl_fetch_memory(sprintf("http://127.0.0.1:%d/", port), handle)
+  }
   t <- vapply(seq_len(iterations(size)), function(i) {
     curl::handle_setopt(handle, post = TRUE, postfields = x)
     start <- clock()

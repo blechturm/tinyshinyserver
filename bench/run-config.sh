@@ -16,7 +16,7 @@
 #
 # Environment: SERVER_CPU0 (first vCPU of the server, default 4), LOAD_CPUS
 # (default 16-19), DURATION (s, default 32), WARMUP (s, default 8), IMAGE,
-# SCHEDULER, EXTRA_ENV (extra "-e K=V" arguments for the server container),
+# IDLE_SECONDS (default 10), SCHEDULER, EXTRA_ENV (extra "-e K=V" arguments for the server container),
 # LOADGEN_ARGS (extra load generator arguments, e.g. "--session-ops 5").
 set -euo pipefail
 export MSYS_NO_PATHCONV=1
@@ -62,10 +62,20 @@ done
 ready_s=$(awk -v a="$(date +%s.%N)" -v b="$started" 'BEGIN { printf "%.1f", a - b }')
 echo "[$label c$cpus] ready after ${ready_s}s"
 
-# Idle consumption of the whole tree over 10 s, before any load
-docker exec tss-server /bench/procstat.sh > "$out/raw/c${cpus}_${label}_idle.before"
-sleep 10
-docker exec tss-server /bench/procstat.sh > "$out/raw/c${cpus}_${label}_idle.after"
+# Per-process CPU ticks and RSS, the host time they were taken (.t), and
+# the container's cgroup memory (.mem)
+snapshot() {
+  docker exec tss-server /bench/procstat.sh > "$1"
+  date +%s.%N > "$1.t"
+  docker exec tss-server sh -c \
+    'echo current $(cat /sys/fs/cgroup/memory.current); grep -E "^(anon|file) " /sys/fs/cgroup/memory.stat' \
+    > "$1.mem" 2>/dev/null || true
+}
+
+# Idle consumption of the whole tree, before any load
+snapshot "$out/raw/c${cpus}_${label}_idle.before"
+sleep "${IDLE_SECONDS:-10}"
+snapshot "$out/raw/c${cpus}_${label}_idle.after"
 echo "ready_s $ready_s" > "$out/raw/c${cpus}_${label}_meta.txt"
 docker exec tss-server cat /bench/VERSIONS >> "$out/raw/c${cpus}_${label}_meta.txt"
 
@@ -75,15 +85,18 @@ mapfile -t runs < <(printf '%s\n' "${runs[@]}" | shuf)
 for run in "${runs[@]}"; do
   read -r s u r <<< "$run"
   id="c${cpus}_${label}_${s}_u${u}_r${r}"
-  docker exec tss-server /bench/procstat.sh > "$out/raw/$id.proc0"
+  # The speed of the vCPUs this run gets, as a covariate: Hyper-V moves the
+  # VM's vCPUs between performance and efficiency cores
+  docker exec tss-server Rscript /bench/calibrate.R 2>/dev/null | grep "per ms" > "$out/raw/$id.calib" || true
+  snapshot "$out/raw/$id.proc0"
   docker exec tss-load node loadgen.mjs --url "$url" --scenario "$s" --users "$u" \
-    --duration "$DURATION" --warmup "$WARMUP" --seed "$r$u" \
+    --duration "$DURATION" --warmup "$WARMUP" --seed "$r$u" ${LOADGEN_ARGS:-} \
     --out "$rel_out/raw/$id.csv" --summary "$rel_out/raw/$id.json" > /dev/null &
   loadgen=$!
   sleep $(( WARMUP + (DURATION - WARMUP) / 2 ))
-  docker exec tss-server /bench/procstat.sh > "$out/raw/$id.proc1"
+  snapshot "$out/raw/$id.proc1"
   wait $loadgen
-  docker exec tss-server /bench/procstat.sh > "$out/raw/$id.proc2"
+  snapshot "$out/raw/$id.proc2"
   echo "[$label c$cpus] $id done"
   sleep 3
 done
