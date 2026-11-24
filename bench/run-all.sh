@@ -31,6 +31,10 @@ for phase in $phases; do
     3) run_phase "4" "B D" "10 40 80" 2 "${configs_tss[@]}" ;;
     # The scheduler comparison needs session churn; see mizu/run-mizu.sh
     4) ;;
+    # Phase 2, trimmed after scenario B showed the modified server without
+    # replicas to match upstream: A with all baselines, C and D without it
+    2t) run_phase "1 2" "A" "5 20 80" 2 "direct 1" "upstream 1" "spike 1" "replicas 4" "replicas 8"
+        run_phase "1 2" "C D" "5 20 80" 2 "upstream 1" "replicas 2" "replicas 4" "replicas 8" ;;
   esac
 done
 echo "=== done $(date -Is)"
