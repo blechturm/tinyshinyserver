@@ -44,6 +44,8 @@ const ROLES = {
   io: { op: "io", amount: IO_MS, think: 1000 },
   saturate: { op: "cpu", amount: 250, think: 250 },
   stateful: { op: "state", think: 500 },
+  // bench/app-data: filter one of 100 categories and aggregate
+  querier: { op: "query", amount: () => 1 + Math.floor(random() * 100), think: 500 },
 };
 function roleOf(i) {
   switch (SCENARIO) {
@@ -51,6 +53,7 @@ function roleOf(i) {
     case "B": return i % 5 === 4 ? "heavy" : "light"; // 20% heavy
     case "C": return i % 5 === 4 ? "io" : "light"; // 20% blocking I/O
     case "D": return "saturate";
+    case "Q": return i % 2 === 1 ? "querier" : "light"; // half query the dataset
     default: throw new Error("Unknown scenario " + SCENARIO);
   }
 }
@@ -103,7 +106,8 @@ async function user(i) {
     const sent = now();
     sessionOps++;
     try {
-      const answer = await session.request(role.op, id, role.amount);
+      const amount = typeof role.amount === "function" ? role.amount() : role.amount;
+      const answer = await session.request(role.op, id, amount);
       const done = now();
       rows.push([sent.toFixed(1), done.toFixed(1), (done - sent).toFixed(2), role.op, i, session.replica, answer[1], sent < WARMUP ? 1 : 0, ""]);
     } catch (e) {

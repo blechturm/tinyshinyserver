@@ -14,6 +14,11 @@ RUN install2.r --error --skipinstalled \
 # mizu, pinned to the tested version, for the optional telemetry experiment
 RUN Rscript -e 'install.packages("https://cloud.r-project.org/src/contrib/mizu_0.1.1.tar.gz", repos = NULL, type = "source")'   && Rscript -e 'stopifnot(packageVersion("mizu") == "0.1.1")'
 
+# The follow-up experiments: shared data (mori, DuckDB) and async offloading
+# (mirai). DuckDB from Posit Package Manager's binaries; mori and mirai, small
+# C packages, from CRAN.
+RUN install2.r --error --skipinstalled DBI duckdb   && Rscript -e 'install.packages(c("mori", "mirai", "nanonext"), repos = "https://cloud.r-project.org")'   && rm -rf /tmp/downloaded_packages
+
 COPY src/upstream /src/upstream
 RUN mkdir -p /opt/lib-upstream && R CMD INSTALL --no-docs --library=/opt/lib-upstream /src/upstream
 
@@ -21,8 +26,13 @@ COPY src/spike /src/spike
 RUN mkdir -p /opt/lib-spike && R CMD INSTALL --no-docs --library=/opt/lib-spike /src/spike
 
 COPY app /bench/app
+COPY app-data /bench/app-data
+COPY app-async /bench/app-async
 COPY mizu /bench/mizu
+# The shared-data benchmark's dataset: about 270 MB in memory
+RUN Rscript /bench/app-data/make-data.R /data 1e7
 COPY docker/serve.sh docker/procstat.sh docker/calibrate.R docker/VERSIONS /bench/
-RUN chmod +x /bench/*.sh
+RUN chmod +x /bench/*.sh   && Rscript -e 'for (p in c("mizu", "mori", "mirai", "nanonext", "duckdb", "shiny")) cat(p, format(packageVersion(p)), "
+")' >> /bench/VERSIONS
 EXPOSE 3838 3839
 ENTRYPOINT ["/bench/serve.sh"]

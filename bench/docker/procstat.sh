@@ -1,7 +1,8 @@
 #!/bin/sh
 # One line per process of the container: pid, ppid, CPU ticks (user +
 # system), RSS in kB, and role (proxy: the server's own R session; app: an
-# R process of an app; other). Ticks are divided by `getconf CLK_TCK`.
+# R process of an app, or one of its mirai daemons; owner: the mori data
+# owner; other). Ticks are divided by `getconf CLK_TCK`.
 for d in /proc/[0-9]*; do
   pid=${d#/proc/}
   [ -r "$d/stat" ] || continue
@@ -12,6 +13,7 @@ for d in /proc/[0-9]*; do
   cmd=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null | cut -c1-200)
   case "$cmd" in
     *start_tss*|*runApp*) role=proxy ;;
+    *share-data*) role=owner ;;
     *R*callr*|*/R\ *|*exec/R*) role=app ;;
     *) role=other ;;
   esac

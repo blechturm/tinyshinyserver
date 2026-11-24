@@ -5,16 +5,24 @@
 #   serve.sh spike         modified tinyshinyserver, one app process (no replicas)
 #   serve.sh replicas N    modified tinyshinyserver, a group of N replicas
 #   [SCHEDULER=round_robin] chooses the group's scheduler
+#   [BENCH_APP=/bench/app-data] serves another benchmark app; with
+#   BENCH_DATA_MODE=mori, a data owner process shares the dataset first
 set -e
 mode="$1"; n="${2:-1}"
+app_dir="${BENCH_APP:-/bench/app}"
+if [ "${BENCH_DATA_MODE:-}" = "mori" ]; then
+  rm -f /data/mori-name
+  Rscript /bench/app-data/share-data.R /data /data/mori-name &
+  while [ ! -s /data/mori-name ]; do sleep 0.2; done
+fi
 if [ "$mode" = "direct" ]; then
-  exec Rscript -e 'shiny::runApp("/bench/app", port = 3838, host = "0.0.0.0", launch.browser = FALSE)'
+  exec Rscript -e "shiny::runApp('$app_dir', port = 3838, host = '0.0.0.0', launch.browser = FALSE)"
 fi
 lib=/opt/lib-spike
 [ "$mode" = "upstream" ] && lib=/opt/lib-upstream
-app='{"name": "demo", "path": "/bench/app", "resident": true}'
+app="{\"name\": \"demo\", \"path\": \"$app_dir\", \"resident\": true}"
 if [ "$mode" = "replicas" ]; then
-  app="{\"name\": \"demo\", \"path\": \"/bench/app\", \"resident\": true, \"replicas\": $n, \"scheduler\": \"${SCHEDULER:-least_connections}\"}"
+  app="{\"name\": \"demo\", \"path\": \"$app_dir\", \"resident\": true, \"replicas\": $n, \"scheduler\": \"${SCHEDULER:-least_connections}\"}"
 fi
 cat > /tmp/config.json <<JSON
 {

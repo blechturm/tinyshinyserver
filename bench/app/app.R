@@ -1,4 +1,5 @@
-# Benchmark app for the session load-balancing spike.
+# Benchmark app for the session load-balancing spike. bench/app-async/app.R
+# is generated from this file (see bench/app-async/make-app.R).
 #
 # Every operation is triggered by one input and answered by one output whose
 # value starts with the request id, so a protocol-level client can measure the

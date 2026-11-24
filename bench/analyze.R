@@ -30,13 +30,13 @@ dir.create(file.path(out, "plots"), recursive = TRUE, showWarnings = FALSE)
 CLK_TCK <- 100
 # CPU seconds of each operation, and the mean think time, per scenario role;
 # see loadgen.mjs. Used for the nominal offered load.
-ROLE_CPU <- c(light = 0, stateful = 0, heavy = 0.5, io = 0, saturate = 0.25)
-ROLE_THINK <- c(light = 0.5, stateful = 0.5, heavy = 2, io = 1, saturate = 0.25)
+ROLE_CPU <- c(light = 0, stateful = 0, heavy = 0.5, io = 0, saturate = 0.25, querier = 0)
+ROLE_THINK <- c(light = 0.5, stateful = 0.5, heavy = 2, io = 1, saturate = 0.25, querier = 0.5)
 
 read_proc <- function(file) {
   if (!file.exists(file) || file.size(file) == 0) return(NULL)
   p <- utils::read.table(file, col.names = c("pid", "ppid", "ticks", "rss_kb", "role"))
-  p[p$role %in% c("proxy", "app"), ]
+  p[p$role %in% c("proxy", "app", "owner"), ]
 }
 snapshot_time <- function(file) {
   t <- paste0(file, ".t")
@@ -44,10 +44,10 @@ snapshot_time <- function(file) {
 }
 read_mem <- function(file) {
   f <- paste0(file, ".mem")
-  if (!file.exists(f) || file.size(f) == 0) return(c(current = NA, peak = NA, rss = NA))
+  if (!file.exists(f) || file.size(f) == 0) return(c(current = NA, peak = NA, rss = NA, shmem = NA))
   kv <- utils::read.table(f, col.names = c("key", "value"), fill = TRUE)
   get <- function(k) as.numeric(kv$value[kv$key == k][1] %||% NA) / 1024^2
-  c(current = get("current"), peak = get("peak"), rss = get("total_rss"))
+  c(current = get("current"), peak = get("peak"), rss = get("total_rss"), shmem = get("total_shmem"))
 }
 cpu_seconds <- function(before, after) {
   if (is.null(before) || is.null(after)) return(c(proxy = NA, app = NA))
@@ -116,7 +116,9 @@ for (dir in dirs) {
       proxy_cores = cpu[["proxy"]] / elapsed, app_cores = cpu[["app"]] / elapsed,
       rss_proxy_mb = if (is.null(mid)) NA else sum(mid$rss_kb[mid$role == "proxy"]) / 1024,
       rss_apps_mb = if (is.null(mid)) NA else sum(mid$rss_kb[mid$role == (if (key$config == "direct") "proxy" else "app")]) / 1024,
-      cgroup_mb = mem[["current"]], cgroup_rss_mb = mem[["rss"]], cgroup_peak_mb = peak,
+      cgroup_mb = mem[["current"]], cgroup_rss_mb = mem[["rss"]], cgroup_shmem_mb = mem[["shmem"]],
+      cgroup_peak_mb = peak,
+      rss_owner_mb = if (is.null(mid)) NA else sum(mid$rss_kb[mid$role == "owner"]) / 1024,
       calib_per_ms = calib, late_sessions = late_sessions, startup_max_ms = s$startup_ms$max %||% NA,
       heavy_on_busiest = heavy_max, heavy_users = sum(heavy),
       demand_cores = demand, sessions_max_share = if (length(dist)) max(dist) / sum(dist) else NA)
@@ -173,7 +175,8 @@ run_groups <- split(runs, runs[keys], drop = TRUE)
 summ <- do.call(rbind, lapply(run_groups, function(g) {
   row <- g[1, keys]
   for (v in c("ops_per_s", "error_rate", "startup_p50_ms", "startup_p95_ms", "proxy_cores", "app_cores",
-              "rss_proxy_mb", "rss_apps_mb", "cgroup_mb", "cgroup_rss_mb", "cgroup_peak_mb", "calib_per_ms",
+              "rss_proxy_mb", "rss_apps_mb", "rss_owner_mb", "cgroup_mb", "cgroup_rss_mb", "cgroup_shmem_mb",
+              "cgroup_peak_mb", "calib_per_ms",
               "heavy_on_busiest", "demand_cores", "sessions_max_share", "window_s", "startup_max_ms", "late_sessions")) {
     row[[v]] <- stats::median(g[[v]], na.rm = TRUE)
     row[[paste0(v, "_min")]] <- suppressWarnings(min(g[[v]], na.rm = TRUE))
