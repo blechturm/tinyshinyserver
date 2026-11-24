@@ -95,6 +95,15 @@ test_that("replica fields are recognized, and a user cannot set replica_of", {
   expect_equal(loaded$apps[[1]]$replica_of, "demo")
 })
 
+test_that("an unknown field that extends a replica field's name has no effect", {
+  loaded <- read_apps_config(list(
+    list(name = "a", path = unused_app_path(), replicas_note = "two"),
+    list(name = "b", path = unused_app_path(), replicas_n = 1, scheduler_x = "y"),
+    list(name = "b-1", path = unused_app_path())
+  ))
+  expect_equal(vapply(loaded$apps, function(app) app$name, character(1)), c("a", "b", "b-1"))
+})
+
 test_that("the port range check counts every replica", {
   result <- ShinyServerConfig$new()$validate_config(list(
     apps = list(list(name = "demo", path = "/tmp/a", replicas = 10)), log_dir = "/tmp/logs",
@@ -216,6 +225,36 @@ test_that("a replica's own address is proxied as any app's", {
   config$config$apps[[2]]$port <- 4567
   response <- handle_proxy_request("/proxy/demo-2/x", "GET", "", httpuv_request(list(accept = "application/json")), config)
   expect_equal(response$body, "http://127.0.0.1:4567/x")
+})
+
+test_that("only page requests move the rotation on and count as pending", {
+  config <- replica_config(scheduler = "round_robin")
+  start_all(config)
+  for (method in c("POST", "HEAD", "POST")) {
+    response <- handle_proxy_request("/proxy/demo/", method, "", httpuv_request(list(accept = "text/html")), config)
+    expect_equal(response$headers$Location, "/proxy/demo-1/")
+  }
+  expect_equal(replica_load(config, "demo-1"), 0)
+  response <- handle_proxy_request("/proxy/demo/", "GET", "", httpuv_request(list(accept = "text/html")), config)
+  expect_equal(response$headers$Location, "/proxy/demo-1/")
+  expect_equal(replica_load(config, "demo-1"), 1)
+})
+
+test_that("least_connections prefers a running replica to one that would start", {
+  dir <- make_test_app_dir()
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  config <- replica_config(apps = list(list(name = "demo", path = dir, resident = FALSE, replicas = 3)))
+  config$add_app_process("demo-3", live_process())
+  expect_equal(choose_replica(config, replica_group(config, "demo"), record = FALSE), "demo-3")
+  # but spreads once it has a session, as the stopped ones have none
+  config$add_ws_connection("a", list(app_name = "demo-3"))
+  expect_equal(choose_replica(config, replica_group(config, "demo"), record = FALSE), "demo-1")
+})
+
+test_that("an unavailable group is logged once a minute, not at every request", {
+  config <- replica_config()
+  logged <- capture_test_log(for (i in 1:5) handle_proxy_request("/proxy/demo/", "GET", "", httpuv_request(list(accept = "text/html")), config))
+  expect_equal(sum(grepl("No replica of app demo is available", logged)), 1)
 })
 
 test_that("unknown apps are still not found", {

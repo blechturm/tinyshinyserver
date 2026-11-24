@@ -679,7 +679,7 @@ ShinyServerConfig <- setRefClass("ShinyServerConfig",
         # Names that differ only in case would share log files on
         # case-insensitive file systems (Windows, macOS). The names of an
         # app's replicas are taken as well as its own.
-        names_taken <- c(app$name, if (!is.null(app$replicas)) replica_names(app$name, app$replicas))
+        names_taken <- c(app$name, if (!is.null(app[["replicas"]])) replica_names(app$name, app[["replicas"]]))
         for (name in names_taken) {
           name_validation <- validate_app_name(name)
           if (!name_validation$valid) {

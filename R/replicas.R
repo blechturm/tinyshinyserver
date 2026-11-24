@@ -34,14 +34,16 @@ replica_count <- function(app) {
 
 # NULL, or what is wrong with an app entry's replica settings
 replica_settings_problem <- function(app) {
-  if ("replicas" %in% names(app) && !is_replica_count(app$replicas)) {
+  # `[[` reads the fields exactly: `$` would take "replicas_note" for one
+  if ("replicas" %in% names(app) && !is_replica_count(app[["replicas"]])) {
     return(paste("replicas must be a whole number from 1 to", MAX_REPLICAS))
   }
   if ("scheduler" %in% names(app)) {
     if (!"replicas" %in% names(app)) {
       return("scheduler needs replicas")
     }
-    if (!is.character(app$scheduler) || length(app$scheduler) != 1 || !app$scheduler %in% REPLICA_SCHEDULERS) {
+    scheduler <- app[["scheduler"]]
+    if (!is.character(scheduler) || length(scheduler) != 1 || !scheduler %in% REPLICA_SCHEDULERS) {
       return(paste("scheduler must be one of:", paste(REPLICA_SCHEDULERS, collapse = ", ")))
     }
   }
@@ -54,15 +56,15 @@ replica_settings_problem <- function(app) {
 expand_replica_apps <- function(apps) {
   expanded <- list()
   for (app in apps) {
-    if (is.null(app$replicas)) {
+    if (is.null(app[["replicas"]])) {
       expanded <- c(expanded, list(app))
       next
     }
     base <- app
-    base$replicas <- NULL
+    base[["replicas"]] <- NULL
     base$replica_of <- app$name
-    base$scheduler <- app$scheduler %||% REPLICA_SCHEDULERS[[1]]
-    for (name in replica_names(app$name, app$replicas)) {
+    base$scheduler <- app[["scheduler"]] %||% REPLICA_SCHEDULERS[[1]]
+    for (name in replica_names(app$name, app[["replicas"]])) {
       base$name <- name
       expanded <- c(expanded, list(base))
     }
@@ -127,8 +129,11 @@ replica_load <- function(config, name) {
 # The replica that a new visitor of a group goes to, or NULL when none is
 # available. Both schedulers go round the group from where the last choice
 # left off, so that least_connections spreads visitors among equally loaded
-# replicas too.
-choose_replica <- function(config, group) {
+# replicas too; among those, it prefers one that is running to one that a
+# request would have to start. Only a choice that is recorded, for a page
+# that will open a session, moves the rotation on and counts as pending: a
+# request with a body is answered twice, once from its headers.
+choose_replica <- function(config, group, record = TRUE) {
   members <- group$members
   counter_key <- paste0("next:", group$name)
   start <- (config$replica_state[[counter_key]] %||% 0L) %% length(members)
@@ -140,8 +145,13 @@ choose_replica <- function(config, group) {
   chosen <- if (identical(group$scheduler, "round_robin")) {
     order[[1]]
   } else {
-    loads <- vapply(order, function(name) replica_load(config, name), numeric(1))
+    loads <- vapply(order, function(name) {
+      replica_load(config, name) + if (is_process_alive(config$get_app_process(name))) 0 else 0.5
+    }, numeric(1))
     order[[which.min(loads)]]
+  }
+  if (!record) {
+    return(chosen)
   }
   assign(counter_key, match(chosen, members), envir = config$replica_state)
   assign(paste0("pending:", chosen), c(pending_assignments(config, chosen), config$clock_seconds()),
@@ -154,9 +164,14 @@ choose_replica <- function(config, group) {
 # same path at a replica's own address, which the browser keeps for the rest
 # of the session, or HTTP 503 while no replica can take a visitor
 redirect_to_replica <- function(group, route, method, query_string, req, config, template_manager = NULL) {
-  replica <- choose_replica(config, group)
+  replica <- choose_replica(config, group, record = identical(method, "GET"))
   if (is.null(replica)) {
-    logger::log_warn("No replica of app {name} is available", name = group$name)
+    # The starting page asks again every 2 seconds in every waiting tab
+    warned_key <- paste0("warned:", group$name)
+    if (config$clock_seconds() - (config$replica_state[[warned_key]] %||% -Inf) >= config$START_PROBLEM_LOG_SECONDS) {
+      assign(warned_key, config$clock_seconds(), envir = config$replica_state)
+      logger::log_warn("No replica of app {name} is available", name = group$name)
+    }
     return(as_starting_page(
       create_503_response(sprintf("No replica of app '%s' is available, please retry", group$name), 2),
       req, method, group$name, template_manager, 2
