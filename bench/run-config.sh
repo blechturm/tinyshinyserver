@@ -63,12 +63,13 @@ ready_s=$(awk -v a="$(date +%s.%N)" -v b="$started" 'BEGIN { printf "%.1f", a - 
 echo "[$label c$cpus] ready after ${ready_s}s"
 
 # Per-process CPU ticks and RSS, the host time they were taken (.t), and
-# the container's cgroup memory (.mem)
+# the container's cgroup (v1) memory: usage, peak since the container
+# started, and its RSS and page cache (.mem)
 snapshot() {
   docker exec tss-server /bench/procstat.sh > "$1"
   date +%s.%N > "$1.t"
   docker exec tss-server sh -c \
-    'echo current $(cat /sys/fs/cgroup/memory.current); grep -E "^(anon|file) " /sys/fs/cgroup/memory.stat' \
+    'm=/sys/fs/cgroup/memory; echo current $(cat $m/memory.usage_in_bytes); echo peak $(cat $m/memory.max_usage_in_bytes); grep -E "^total_(rss|cache) " $m/memory.stat' \
     > "$1.mem" 2>/dev/null || true
 }
 
