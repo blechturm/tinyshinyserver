@@ -9,6 +9,8 @@ KNOWN_CONFIG_FIELDS <- c(
   "base_path", "idle_timeout_minutes", "log_level", "max_unanswered_mb"
 )
 KNOWN_APP_FIELDS <- c("name", "path", "resident", "appstart_timeout")
+# The optional fields of an app with replicas; see replicas.R
+REPLICA_APP_FIELDS <- c("replicas", "scheduler")
 
 # The values of the log_level field, from most to least detailed
 LOG_LEVELS <- c("DEBUG", "INFO", "WARN", "ERROR")
@@ -53,7 +55,7 @@ unrecognized_config_fields <- function(config) {
 
   ignored <- dQuote(setdiff(names(config), KNOWN_CONFIG_FIELDS), FALSE)
   for (app in config$apps) {
-    extra <- setdiff(names(app), KNOWN_APP_FIELDS)
+    extra <- setdiff(names(app), c(KNOWN_APP_FIELDS, REPLICA_APP_FIELDS))
     if (length(extra) > 0) {
       ignored <- c(ignored, paste(dQuote(extra, FALSE), "in app", dQuote(app$name, FALSE)))
     }
@@ -158,7 +160,9 @@ ShinyServerConfig <- setRefClass("ShinyServerConfig",
     START_PROBLEM_MAX_AGE_SECONDS = "numeric",
     # How often the reason that an on-demand app cannot start is logged at
     # WARN for the requests that ask for it
-    START_PROBLEM_LOG_SECONDS = "numeric"
+    START_PROBLEM_LOG_SECONDS = "numeric",
+    # Each replica group's scheduling state; see replicas.R
+    replica_state = "environment"
   ),
   methods = list(
     initialize = function() {
@@ -194,6 +198,7 @@ ShinyServerConfig <- setRefClass("ShinyServerConfig",
       start_problems_logged <<- new.env(hash = TRUE, parent = emptyenv())
       start_failures <<- new.env(hash = TRUE, parent = emptyenv())
       app_documents <<- new.env(hash = TRUE, parent = emptyenv())
+      replica_state <<- new.env(hash = TRUE, parent = emptyenv())
       shutdown_requested <<- FALSE
       reload_requested <<- FALSE
       interrupt_requested <<- FALSE
@@ -314,7 +319,7 @@ ShinyServerConfig <- setRefClass("ShinyServerConfig",
       # names by prefix, and "proxy_port_old" would answer for proxy_port.
       new_config <- new_config[intersect(names(new_config), KNOWN_CONFIG_FIELDS)]
       new_config$apps <- lapply(new_config$apps, function(app) {
-        app[intersect(names(app), KNOWN_APP_FIELDS)]
+        app[intersect(names(app), c(KNOWN_APP_FIELDS, REPLICA_APP_FIELDS))]
       })
 
       # Set defaults for optional fields
@@ -339,6 +344,9 @@ ShinyServerConfig <- setRefClass("ShinyServerConfig",
           new_config$apps[[i]]$resident <- FALSE
         }
       }
+
+      # An app with replicas runs as one app per replica
+      new_config$apps <- expand_replica_apps(new_config$apps)
 
       # Two apps cannot render one document into its directory
       shared_problem <- shared_document_problem(new_config$apps)
@@ -605,7 +613,7 @@ ShinyServerConfig <- setRefClass("ShinyServerConfig",
 
       # Check if there's enough port range for all apps. `[[` matches the
       # optional names exactly, where `$` would accept "proxy_port_old".
-      num_apps <- length(config$apps)
+      num_apps <- if (is.list(config$apps)) sum(vapply(config$apps, replica_count, numeric(1))) else length(config$apps)
       reserved_ports <- unique(c(config[["proxy_port"]] %||% 3838, config[["management_port"]] %||% 3839))
       reserved_ports <- reserved_ports[reserved_ports >= config$starting_port & reserved_ports <= 65535]
 
@@ -663,14 +671,27 @@ ShinyServerConfig <- setRefClass("ShinyServerConfig",
           return(list(valid = FALSE, error = paste0("App ", i, ": ", name_validation$error)))
         }
 
-        # Names that differ only in case would share log files on
-        # case-insensitive file systems (Windows, macOS)
-        if (ascii_lower(app$name) %in% ascii_lower(app_names)) {
-          return(list(valid = FALSE, error = paste(
-            "Duplicate app name:", app$name, "(names must differ by more than letter case)"
-          )))
+        replica_problem <- replica_settings_problem(app)
+        if (!is.null(replica_problem)) {
+          return(list(valid = FALSE, error = paste("App", i, replica_problem)))
         }
-        app_names <- c(app_names, app$name)
+
+        # Names that differ only in case would share log files on
+        # case-insensitive file systems (Windows, macOS). The names of an
+        # app's replicas are taken as well as its own.
+        names_taken <- c(app$name, if (!is.null(app$replicas)) replica_names(app$name, app$replicas))
+        for (name in names_taken) {
+          name_validation <- validate_app_name(name)
+          if (!name_validation$valid) {
+            return(list(valid = FALSE, error = paste0("App ", i, " replica ", name, ": ", name_validation$error)))
+          }
+          if (ascii_lower(name) %in% ascii_lower(app_names)) {
+            return(list(valid = FALSE, error = paste(
+              "Duplicate app name:", name, "(names must differ by more than letter case)"
+            )))
+          }
+          app_names <- c(app_names, name)
+        }
 
         # Validate path
         if (!is.character(app$path) || length(app$path) != 1) {
@@ -791,6 +812,7 @@ ShinyServerConfig <- setRefClass("ShinyServerConfig",
       app_name <- connection_info$app_name
       if (!is.null(app_name) && nzchar(app_name)) {
         assign(app_name, union(app_sessions[[app_name]], session_id), envir = app_sessions)
+        take_pending_assignment(.self, app_name)
         logger::log_debug("Session {session_id} tracked for {app_name}: {count} open",
           session_id = session_id, app_name = app_name, count = get_app_connection_count(app_name)
         )

@@ -95,7 +95,7 @@ TemplateManager <- setRefClass("TemplateManager",
       "Generate the landing page HTML"
 
       # Generate app cards
-      app_cards <- generate_app_cards(config$config$apps)
+      app_cards <- generate_app_cards(public_apps(config$config$apps))
 
       # Render template
       return(render_template("landing_page", list(

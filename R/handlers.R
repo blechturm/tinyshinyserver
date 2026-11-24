@@ -292,7 +292,7 @@ handle_apps_api <- function(config, process_manager = NULL) {
 
       # The proxy port may be public, so expose only what the landing page
       # needs; paths, ports, and PIDs stay on the loopback management API
-      apps_status <- lapply(apps_status, function(app) {
+      apps_status <- lapply(public_app_statuses(config, apps_status), function(app) {
         app[intersect(c("name", "status", "resident", "connections"), names(app))]
       })
 
@@ -443,6 +443,10 @@ handle_proxy_request <- function(path, method, query_string, req, config, proces
   app_config <- config$get_app_config(app_name)
 
   if (is.null(app_config)) {
+    group <- replica_group(config, app_name)
+    if (!is.null(group)) {
+      return(redirect_to_replica(group, route, method, query_string, req, config, template_manager))
+    }
     return(create_error_response("App not found", 404))
   }
 
